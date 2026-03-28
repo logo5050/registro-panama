@@ -5,14 +5,40 @@ export const dynamic = 'force-dynamic';
 
 const PER_PAGE = 25;
 
-type SearchParams = Promise<{ page?: string; q?: string; status?: string }>;
+type EventTypeFilter = 'news_mention' | 'acodeco_infraction' | 'court_ruling' | 'sanction' | '';
+
+type SearchParams = Promise<{
+  page?: string;
+  q?: string;
+  status?: string;
+  eventType?: string;
+}>;
+
+const CATEGORIES: { value: EventTypeFilter; labelEs: string; labelEn: string; emoji: string }[] = [
+  { value: '',                  labelEs: 'Todas',                labelEn: 'All',               emoji: '🏢' },
+  { value: 'news_mention',      labelEs: 'En Noticias',          labelEn: 'In the News',       emoji: '📰' },
+  { value: 'acodeco_infraction',labelEs: 'Infracciones ACODECO', labelEn: 'ACODECO Infractions',emoji: '⚠️' },
+  { value: 'court_ruling',      labelEs: 'Fallos Judiciales',    labelEn: 'Court Rulings',     emoji: '⚖️' },
+  { value: 'sanction',          labelEs: 'Sanciones',            labelEn: 'Sanctions',         emoji: '🚫' },
+];
 
 export default async function Home({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
-  const currentPage = Math.max(1, parseInt(params.page || '1'));
-  const searchQuery = params.q || '';
+  const currentPage  = Math.max(1, parseInt(params.page || '1'));
+  const searchQuery  = params.q || '';
   const statusFilter = params.status || '';
+  const eventTypeFilter = (params.eventType || '') as EventTypeFilter;
   const offset = (currentPage - 1) * PER_PAGE;
+
+  // If filtering by event type, get matching business IDs first
+  let filteredIds: string[] | null = null;
+  if (eventTypeFilter) {
+    const { data: eventRows } = await supabasePublic
+      .from('events')
+      .select('business_id')
+      .eq('event_type', eventTypeFilter);
+    filteredIds = [...new Set((eventRows || []).map((e: { business_id: string }) => e.business_id))];
+  }
 
   let query = supabasePublic
     .from('businesses')
@@ -20,19 +46,30 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     .order('updated_at', { ascending: false })
     .range(offset, offset + PER_PAGE - 1);
 
-  if (searchQuery) query = query.ilike('name', `%${searchQuery}%`);
+  if (searchQuery)  query = query.ilike('name', `%${searchQuery}%`);
   if (statusFilter) query = query.eq('status', statusFilter);
+  if (filteredIds !== null) {
+    if (filteredIds.length > 0) {
+      query = query.in('id', filteredIds);
+    } else {
+      // No businesses match this category — force empty result
+      query = query.eq('id', '00000000-0000-0000-0000-000000000000');
+    }
+  }
 
   const { data: businesses, count } = await query;
 
-  const total = count || 0;
+  const total      = count || 0;
   const totalPages = Math.ceil(total / PER_PAGE);
 
-  function buildUrl(page: number, q?: string, status?: string) {
+  const activeCategory = CATEGORIES.find(c => c.value === eventTypeFilter) || CATEGORIES[0];
+
+  function buildUrl(page: number, q?: string, status?: string, eventType?: string) {
     const p = new URLSearchParams();
-    if (page > 1) p.set('page', String(page));
-    if (q) p.set('q', q);
-    if (status) p.set('status', status);
+    if (page > 1)    p.set('page', String(page));
+    if (q)           p.set('q', q);
+    if (status)      p.set('status', status);
+    if (eventType)   p.set('eventType', eventType);
     return p.toString() ? `/?${p.toString()}` : '/';
   }
 
@@ -41,7 +78,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
       <main className="max-w-4xl mx-auto px-6 py-20">
 
         {/* Header */}
-        <div className="mb-12 text-center sm:text-left">
+        <div className="mb-10 text-center sm:text-left">
           <h1 className="text-6xl font-black text-slate-900 dark:text-white tracking-tighter mb-4">
             Registro Panamá
           </h1>
@@ -54,8 +91,34 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
           </p>
         </div>
 
-        {/* Search + Filter bar */}
+        {/* Category Tabs */}
+        <div className="flex flex-wrap gap-2 mb-6">
+          {CATEGORIES.map((cat) => {
+            const isActive = cat.value === eventTypeFilter;
+            return (
+              <Link
+                key={cat.value}
+                href={buildUrl(1, searchQuery, statusFilter, cat.value || undefined)}
+                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
+                  isActive
+                    ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400'
+                }`}
+              >
+                <span>{cat.emoji}</span>
+                <span>{cat.labelEs}</span>
+                <span className="hidden sm:inline text-[10px] opacity-60">/ {cat.labelEn}</span>
+              </Link>
+            );
+          })}
+        </div>
+
+        {/* Search + Status Filter */}
         <form method="GET" action="/" className="flex flex-col sm:flex-row gap-3 mb-8">
+          {/* Preserve active category tab across searches */}
+          {eventTypeFilter && (
+            <input type="hidden" name="eventType" value={eventTypeFilter} />
+          )}
           <input
             type="text"
             name="q"
@@ -79,7 +142,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
           >
             Buscar
           </button>
-          {(searchQuery || statusFilter) && (
+          {(searchQuery || statusFilter || eventTypeFilter) && (
             <Link
               href="/"
               className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors text-center"
@@ -93,13 +156,17 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
         <section className="mb-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xs font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
-              {searchQuery || statusFilter
+              {eventTypeFilter
+                ? `${activeCategory.emoji} ${activeCategory.labelEs} — ${total.toLocaleString()} empresas`
+                : searchQuery || statusFilter
                 ? `${total.toLocaleString()} resultados`
                 : 'Empresas Recientes / Recent Businesses'}
             </h2>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
-              Página {currentPage} de {totalPages}
-            </span>
+            {totalPages > 1 && (
+              <span className="text-xs text-slate-400 dark:text-slate-500">
+                Página {currentPage} de {totalPages}
+              </span>
+            )}
           </div>
 
           {/* Business list */}
@@ -124,7 +191,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                         )}
                         {biz.province && (
                           <span className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                            {biz.province}
+                            📍 {biz.province}
                           </span>
                         )}
                         {biz.industry && (
@@ -148,8 +215,8 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
               ))
             ) : (
               <div className="p-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-3xl">
-                <p className="text-slate-400 italic">No se encontraron resultados.</p>
-                <Link href="/" className="text-sm text-blue-500 hover:underline mt-2 inline-block">Ver todas las empresas</Link>
+                <p className="text-slate-400 italic mb-2">No se encontraron resultados.</p>
+                <Link href="/" className="text-sm text-blue-500 hover:underline">Ver todas las empresas</Link>
               </div>
             )}
           </div>
@@ -159,7 +226,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
         {totalPages > 1 && (
           <nav className="flex items-center justify-between mt-8 pt-6 border-t border-slate-100 dark:border-slate-800">
             <Link
-              href={currentPage > 1 ? buildUrl(currentPage - 1, searchQuery, statusFilter) : '#'}
+              href={currentPage > 1 ? buildUrl(currentPage - 1, searchQuery, statusFilter, eventTypeFilter || undefined) : '#'}
               className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-colors ${
                 currentPage > 1
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -184,7 +251,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                 return (
                   <Link
                     key={page}
-                    href={buildUrl(page, searchQuery, statusFilter)}
+                    href={buildUrl(page, searchQuery, statusFilter, eventTypeFilter || undefined)}
                     className={`w-9 h-9 flex items-center justify-center rounded-lg text-sm font-medium transition-colors ${
                       page === currentPage
                         ? 'bg-blue-600 text-white'
@@ -198,7 +265,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
             </div>
 
             <Link
-              href={currentPage < totalPages ? buildUrl(currentPage + 1, searchQuery, statusFilter) : '#'}
+              href={currentPage < totalPages ? buildUrl(currentPage + 1, searchQuery, statusFilter, eventTypeFilter || undefined) : '#'}
               className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-colors ${
                 currentPage < totalPages
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -212,7 +279,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
 
         {/* How it works */}
         <section className="mt-16 p-8 bg-slate-900 dark:bg-blue-950/20 rounded-3xl text-white">
-          <h3 className="text-2xl font-bold mb-4">¿Cómo funciona?</h3>
+          <h3 className="text-2xl font-bold mb-4">¿Cómo funciona? / How it works</h3>
           <div className="grid md:grid-cols-3 gap-8 text-slate-300 text-sm leading-relaxed">
             <div>
               <p className="font-bold text-white mb-2">1. Monitoreo Automático</p>
