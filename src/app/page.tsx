@@ -32,15 +32,27 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
 
   // Build select: use PostgREST inner join when filtering by event type
   // This avoids passing 700+ UUIDs in a URL query param
+  type BusinessRow = {
+    name: string;
+    slug: string;
+    category: string | null;
+    status: string | null;
+    province: string | null;
+    industry: string | null;
+    updated_at: string | null;
+  };
+
+  const baseFields = 'name, slug, category, status, province, industry, updated_at';
   const selectFields = eventTypeFilter
-    ? 'name, slug, category, status, province, industry, updated_at, events!inner(event_type)'
-    : 'name, slug, category, status, province, industry, updated_at';
+    ? `${baseFields}, events!inner(event_type)`
+    : baseFields;
 
   let query = supabasePublic
     .from('businesses')
     .select(selectFields, { count: 'exact' })
     .order('updated_at', { ascending: false })
-    .range(offset, offset + PER_PAGE - 1);
+    .range(offset, offset + PER_PAGE - 1)
+    .returns<BusinessRow[]>();
 
   if (searchQuery)    query = query.ilike('name', `%${searchQuery}%`);
   if (statusFilter)   query = query.eq('status', statusFilter);
