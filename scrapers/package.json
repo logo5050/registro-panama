@@ -1,0 +1,16 @@
+{
+  "name": "registro-panama-scrapers",
+  "version": "1.0.0",
+  "description": "Automated scrapers for Registro Panamá — runs via GitHub Actions",
+  "type": "module",
+  "scripts": {
+    "scrape:acodeco": "node acodeco.mjs",
+    "scrape:news": "node news.mjs",
+    "scrape:judiciary": "node judiciary.mjs",
+    "scrape:all": "node acodeco.mjs && node news.mjs && node judiciary.mjs"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "node-fetch": "^3.3.2"
+  }
+}

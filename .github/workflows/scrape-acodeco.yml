@@ -1,0 +1,32 @@
+name: Scrape ACODECO
+
+on:
+  schedule:
+    # Every Monday at 8am UTC (3am Panama time)
+    - cron: '0 8 * * 1'
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install scraper dependencies
+        working-directory: ./scrapers
+        run: npm install
+
+      - name: Run ACODECO scraper
+        working-directory: ./scrapers
+        env:
+          INGEST_API_URL: ${{ secrets.INGEST_API_URL }}
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+        run: node acodeco.mjs
