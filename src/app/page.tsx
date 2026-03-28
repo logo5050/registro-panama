@@ -1,6 +1,8 @@
 import { supabasePublic } from '@/lib/supabase';
 import Link from 'next/link';
 
+export const dynamic = 'force-dynamic';
+
 export default async function Home() {
   const { data: businesses, count } = await supabasePublic
     .from('businesses')
