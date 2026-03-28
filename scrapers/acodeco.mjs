@@ -17,6 +17,7 @@
 
 import * as cheerio from 'cheerio';
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
+import { extractBusinessFromACODECO, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
 
 const ACODECO_BASE = 'https://www.acodeco.gob.pa';
 const ACODECO_NEWS = `${ACODECO_BASE}/inicio/noticias/`;
@@ -132,27 +133,9 @@ async function parseArticleDetails(article) {
 
   if (!bodyText) bodyText = $('body').text().trim();
 
-  // Try to extract the business name from the article
-  // Common patterns: "la empresa X", "la sociedad X", "el comercio X"
-  const namePatterns = [
-    /(?:empresa|sociedad|comercio|compañía|negocio|establecimiento)\s+["']?([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s,\.&]+?)["']?(?:\s*,|\s+fue|\s+ha|\s+por|\s+con|\s+ubicad)/i,
-    /(?:sancion[óa]|mult[óa]|penaliz[óa])\s+(?:a\s+)?(?:la\s+)?["']?([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s,\.&]+?)["']?(?:\s+por|\s+con|\s+debido)/i,
-  ];
-
-  let businessName = null;
-  for (const pattern of namePatterns) {
-    const match = bodyText.match(pattern);
-    if (match) {
-      businessName = match[1].trim().replace(/\s+/g, ' ');
-      break;
-    }
-  }
-
-  // If no business name found, use the article title as a general event
-  if (!businessName) {
-    // Skip articles where we can't identify a specific business
-    return null;
-  }
+  // Claude extracts the actual sanctioned business name from the article
+  const businessName = await extractBusinessFromACODECO(article.title, bodyText);
+  if (!businessName) return null;
 
   // Extract a summary (first 200 chars of body after cleaning)
   const cleanBody = bodyText.replace(/\s+/g, ' ').substring(0, 300);
@@ -176,6 +159,7 @@ async function parseArticleDetails(article) {
 
 // ——— Main ———
 async function main() {
+  requireAnthropicKey();
   console.log('🏛️  ACODECO Scraper — Registro Panamá');
   console.log('=====================================\n');
 
@@ -197,6 +181,7 @@ async function main() {
     process.exit(0);
   }
 
+  logExtractionStats();
   const result = await batchIngest(events);
   logScrapeResult('ACODECO', { ...result, total: events.length });
 }

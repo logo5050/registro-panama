@@ -29,4 +29,5 @@ jobs:
         env:
           INGEST_API_URL: ${{ secrets.INGEST_API_URL }}
           INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node acodeco.mjs

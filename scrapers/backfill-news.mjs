@@ -20,6 +20,7 @@
  */
 
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
+import { extractBusinessFromNews, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
 
 const CF_API = 'https://elcapitalfinanciero.com/wp-json/wp/v2/posts';
 const PER_PAGE = 100;
@@ -49,39 +50,7 @@ const KEYWORD_SEARCHES = [
   { keyword: 'cierra empresa', category: 'Noticias',        event_type: 'news_mention' },
 ];
 
-/**
- * Extract a business name from a news article title.
- * Capital Financiero often leads with the company name.
- */
-function extractBusinessName(title, content) {
-  const text = title + ' ' + content;
-
-  const patterns = [
-    // "Company anuncia/inaugura/lanza/cierra..."
-    /^([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s&.,]{2,50}?)\s+(?:anuncia|inaugura|lanza|abre|cierra|firma|adquiere|reporta|registra|invierte|obtiene|gana|pierde|enfrenta|presenta|lidera)/i,
-    // "Acodeco sanciona a Company"
-    /(?:sanciona?|mult[oó]|penaliz[oó])\s+(?:a\s+)?["«»]?([A-ZÁÉÍÓÚÑ][^"«»\n.]{3,60}?)["«»]?\s+(?:por|con)/i,
-    // Company name in quotes
-    /"([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s&.,]{3,55})"/,
-    /«([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s&.,]{3,55})»/,
-    // "empresa/banco/farmacia X"
-    /(?:empresa|banco|farmacia|supermercado|aerolínea|constructora|aseguradora|financiera)\s+([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s&.]{3,50}?)(?:\s+(?:anuncia|cierra|abre|firma|inicia|reporta|registra))/i,
-    // Fallback: first capitalized phrase in title (min 4 words)
-    /^([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ]{2,}\s+(?:[A-Za-záéíóúñ&]{2,}\s*){2,4})/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      const name = match[1].trim().replace(/\s+/g, ' ');
-      // Skip generic terms
-      if (['Panama', 'Panamá', 'La empresa', 'El banco', 'Las empresas'].includes(name)) continue;
-      if (name.length >= 4 && name.length <= 80) return name;
-    }
-  }
-
-  return null;
-}
+// Business name extraction is now handled by Claude — see lib/extract-entity.mjs
 
 /**
  * Fetch articles for a specific keyword and date range.
@@ -132,7 +101,8 @@ async function fetchByKeyword({ keyword, category, event_type }) {
       const date = post.date?.split('T')[0];
       const link = post.link;
 
-      const businessName = extractBusinessName(title, excerpt + ' ' + content);
+      // Claude extracts the actual business name from the article
+      const businessName = await extractBusinessFromNews(title, excerpt + ' ' + content);
       if (!businessName) continue;
 
       events.push({
@@ -164,6 +134,7 @@ async function fetchByKeyword({ keyword, category, event_type }) {
 
 // ——— Main ———
 async function main() {
+  requireAnthropicKey();
   console.log('📰 Capital Financiero Backfill Scraper — Registro Panamá');
   console.log('==========================================================');
   if (DRY_RUN) console.log('🔍 DRY RUN MODE — nothing will be posted\n');
@@ -193,6 +164,7 @@ async function main() {
     await new Promise(r => setTimeout(r, DELAY_MS));
   }
 
+  logExtractionStats();
   console.log(`\n✅ Total unique events collected: ${allEvents.length}`);
 
   if (allEvents.length === 0) {

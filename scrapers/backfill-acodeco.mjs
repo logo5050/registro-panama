@@ -22,6 +22,7 @@
  */
 
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
+import { extractBusinessFromACODECO, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
 
 const ACODECO_API = 'https://www.acodeco.gob.pa/inicio/wp-json/wp/v2/posts';
 const PER_PAGE = 100;
@@ -53,42 +54,7 @@ function classifyPost(title, content) {
   return 'news_mention';
 }
 
-/**
- * Extract a business name from post content.
- * ACODECO posts follow patterns like:
- *   "Acodeco sanciona a [COMPANY] por..."
- *   "Bar y Discoteca Una Flor representado por..."
- *   "agente económico [COMPANY]..."
- */
-function extractBusinessName(title, content) {
-  const text = title + ' ' + content;
-
-  const patterns = [
-    // "Acodeco sanciona a [Company] por..."
-    /(?:sanciona?|mult[oó]|penaliz[oó])\s+(?:al?\s+)?(?:agente\s+económico\s+)?["«»]?([A-ZÁÉÍÓÚÑ][^"«»\n.]{3,60}?)["«»]?\s+(?:por|con|debido|representad)/i,
-    // "el agente económico "Company""
-    /agente\s+económico\s+["«»"]([^"«»"\n]{3,60})["«»"]/i,
-    // Company name in quotes
-    /"([A-ZÁÉÍÓÚÑ][^"\n]{3,60})"/,
-    /«([A-ZÁÉÍÓÚÑ][^«»\n]{3,60})»/,
-    // "empresa/comercio/sociedad X"
-    /(?:empresa|comercio|sociedad|establecimiento|supermercado|farmacia|banco|tienda)\s+["']?([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s&.,S.A.]{3,50})["']?(?:\s*,|\s+(?:ubicad|por|fue|ha|con|de))/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      const name = match[1].trim().replace(/\s+/g, ' ');
-      if (name.length >= 3 && name.length <= 80) return name;
-    }
-  }
-
-  // For EDICTO posts use the expediente number as identifier (still useful for tracking)
-  const edictoMatch = text.match(/EDICTO\s+N[o°.]+\s*(SG-[\w-]+)/i);
-  if (edictoMatch) return `ACODECO Expediente ${edictoMatch[1]}`;
-
-  return null;
-}
+// Business name extraction is now handled by Claude — see lib/extract-entity.mjs
 
 /**
  * Fetch one page of posts from the ACODECO WordPress REST API.
@@ -115,19 +81,20 @@ async function fetchPage(page) {
 
 /**
  * Convert a WordPress post to a Registro Panama event object.
+ * Now uses Claude for entity extraction — returns a Promise.
  */
-function postToEvent(post) {
+async function postToEvent(post) {
   const title = post.title?.rendered || '';
   const rawContent = post.content?.rendered || '';
   const content = rawContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const date = post.date?.split('T')[0] || new Date().toISOString().split('T')[0];
   const link = post.link || `https://www.acodeco.gob.pa/inicio/?p=${post.id}`;
 
-  const businessName = extractBusinessName(title, content);
+  // Claude extracts the actual sanctioned business name
+  const businessName = await extractBusinessFromACODECO(title, content);
   if (!businessName) return null;
 
   const eventType = classifyPost(title, content);
-  const contentExcerpt = content.substring(0, 400);
 
   return {
     name: businessName,
@@ -140,13 +107,14 @@ function postToEvent(post) {
       scraper: 'backfill-acodeco',
       wp_post_id: post.id,
       post_date: date,
-      content_excerpt: contentExcerpt,
+      content_excerpt: content.substring(0, 400),
     },
   };
 }
 
 // ——— Main ———
 async function main() {
+  requireAnthropicKey();
   console.log('🏛️  ACODECO Backfill Scraper — Registro Panamá');
   console.log('================================================');
   if (DRY_RUN) console.log('🔍 DRY RUN MODE — nothing will be posted\n');
@@ -175,7 +143,7 @@ async function main() {
         continue;
       }
 
-      const event = postToEvent(post);
+      const event = await postToEvent(post);
       if (event) {
         allEvents.push(event);
       } else {
@@ -212,6 +180,7 @@ async function main() {
     return;
   }
 
+  logExtractionStats();
   console.log('🚀 Starting ingestion...\n');
   const result = await batchIngest(allEvents, 300); // 300ms between requests
   logScrapeResult('ACODECO Backfill', { ...result, total: allEvents.length });

@@ -10,6 +10,7 @@
     "scrape:all": "node acodeco.mjs && node news.mjs && node judiciary.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "cheerio": "^1.0.0",
     "node-fetch": "^3.3.2"
   }

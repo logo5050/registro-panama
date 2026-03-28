@@ -12,6 +12,7 @@
 
 import * as cheerio from 'cheerio';
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
+import { extractBusinessFromNews, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
 
 const SOURCES = [
   {
@@ -103,32 +104,11 @@ async function scrapeSource(source) {
 }
 
 /**
- * Extract business name from article for association.
- * For news mentions, we use the article title as the summary
- * and attempt to find a business name.
+ * Convert an article to a Registro Panama event using Claude for entity extraction.
  */
-function articleToEvent(article) {
-  // Try to extract a business name from the title
-  const titlePatterns = [
-    /^([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s&\.]+?)\s*(?:anuncia|inaugura|lanza|abre|cierra|adquiere|invierte|expande|recibe|firma|gana|pierde|enfrenta)/i,
-    /(?:de|para|con|en)\s+([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ\s&\.]{3,30}?)(?:\s*$|\s+(?:en|de|por|para))/i,
-  ];
-
-  let businessName = null;
-  for (const pattern of titlePatterns) {
-    const match = article.title.match(pattern);
-    if (match) {
-      businessName = match[1].trim();
-      break;
-    }
-  }
-
-  // If we can't identify a specific business, create a general market event
-  // using a sanitized version of the title
-  if (!businessName) {
-    businessName = article.title.substring(0, 60).replace(/[^\w\sáéíóúñÁÉÍÓÚÑ&.,-]/g, '').trim();
-    if (!businessName || businessName.length < 5) return null;
-  }
+async function articleToEvent(article) {
+  const businessName = await extractBusinessFromNews(article.title, '');
+  if (!businessName) return null;
 
   return {
     name: businessName,
@@ -147,6 +127,7 @@ function articleToEvent(article) {
 
 // ——— Main ———
 async function main() {
+  requireAnthropicKey();
   console.log('📰 Panama Business News Scraper');
   console.log('================================\n');
 
@@ -168,10 +149,11 @@ async function main() {
 
   console.log(`\n📊 Total unique articles: ${unique.length}`);
 
-  const events = unique
-    .map(articleToEvent)
-    .filter(Boolean)
-    .slice(0, 30); // Limit per run
+  // articleToEvent is now async (uses Claude)
+  const eventResults = await Promise.all(unique.slice(0, 30).map(articleToEvent));
+  const events = eventResults.filter(Boolean);
+
+  logExtractionStats();
 
   if (events.length === 0) {
     console.log('\n⚠️  No parseable business events found this run.');
