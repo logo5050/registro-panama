@@ -257,7 +257,7 @@ export default async function BusinessPage({ params }: Props) {
               Mejora la visibilidad de tu empresa en ChatGPT, Gemini, Perplexity y Claude con una auditoría completa de GEO Glass.
             </p>
             <a
-              href="https://geoglass.io"
+              href="https://geoglass.app"
               target="_blank"
               rel="noopener noreferrer"
               className="block w-full text-center bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-bold transition-colors"
