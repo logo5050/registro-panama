@@ -47,18 +47,17 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     ? `${baseFields}, events!inner(event_type)`
     : baseFields;
 
-  let query = supabasePublic
+  let baseQuery = supabasePublic
     .from('businesses')
     .select(selectFields, { count: 'exact' })
     .order('updated_at', { ascending: false })
-    .range(offset, offset + PER_PAGE - 1)
-    .returns<BusinessRow[]>();
+    .range(offset, offset + PER_PAGE - 1);
 
-  if (searchQuery)    query = query.ilike('name', `%${searchQuery}%`);
-  if (statusFilter)   query = query.eq('status', statusFilter);
-  if (eventTypeFilter) query = query.eq('events.event_type', eventTypeFilter);
+  if (searchQuery)     baseQuery = baseQuery.ilike('name', `%${searchQuery}%`);
+  if (statusFilter)    baseQuery = baseQuery.eq('status', statusFilter);
+  if (eventTypeFilter) baseQuery = baseQuery.eq('events.event_type', eventTypeFilter);
 
-  const { data: businesses, count } = await query;
+  const { data: businesses, count } = await baseQuery.returns<BusinessRow[]>();
 
   const total      = count || 0;
   const totalPages = Math.ceil(total / PER_PAGE);
