@@ -30,32 +30,21 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
   const eventTypeFilter = (params.eventType || '') as EventTypeFilter;
   const offset = (currentPage - 1) * PER_PAGE;
 
-  // If filtering by event type, get matching business IDs first
-  let filteredIds: string[] | null = null;
-  if (eventTypeFilter) {
-    const { data: eventRows } = await supabasePublic
-      .from('events')
-      .select('business_id')
-      .eq('event_type', eventTypeFilter);
-    filteredIds = [...new Set((eventRows || []).map((e: { business_id: string }) => e.business_id))];
-  }
+  // Build select: use PostgREST inner join when filtering by event type
+  // This avoids passing 700+ UUIDs in a URL query param
+  const selectFields = eventTypeFilter
+    ? 'name, slug, category, status, province, industry, updated_at, events!inner(event_type)'
+    : 'name, slug, category, status, province, industry, updated_at';
 
   let query = supabasePublic
     .from('businesses')
-    .select('name, slug, category, status, province, industry, updated_at', { count: 'exact' })
+    .select(selectFields, { count: 'exact' })
     .order('updated_at', { ascending: false })
     .range(offset, offset + PER_PAGE - 1);
 
-  if (searchQuery)  query = query.ilike('name', `%${searchQuery}%`);
-  if (statusFilter) query = query.eq('status', statusFilter);
-  if (filteredIds !== null) {
-    if (filteredIds.length > 0) {
-      query = query.in('id', filteredIds);
-    } else {
-      // No businesses match this category — force empty result
-      query = query.eq('id', '00000000-0000-0000-0000-000000000000');
-    }
-  }
+  if (searchQuery)    query = query.ilike('name', `%${searchQuery}%`);
+  if (statusFilter)   query = query.eq('status', statusFilter);
+  if (eventTypeFilter) query = query.eq('events.event_type', eventTypeFilter);
 
   const { data: businesses, count } = await query;
 
