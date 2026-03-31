@@ -35,13 +35,11 @@ export async function GET(req: NextRequest) {
       totalCount = count || 0;
 
     } else if (statusFilter === 'Acodeco') {
-      // Broaden ACODECO filter to check types, summary and source URL
-      // We use 'eq' for the enum column 'event_type' and 'ilike' for text columns.
-      // Postgres ILIKE doesn't work on enums without explicit casting.
+      // PROVEN ACODECO FILTER: Only uses exact enum or case-insensitive text matches
       const { data, count, error } = await supabasePublic
         .from('businesses')
         .select(`${baseFields}, events!inner(event_type, summary_es, source_url)`, { count: 'exact' })
-        .or('event_type.eq.acodeco_infraction,event_type.eq."INFRACCIÓN ACODECO",summary_es.ilike.%acodeco%,source_url.ilike.%acodeco.gob.pa%', { foreignTable: 'events' })
+        .or('event_type.eq.acodeco_infraction,summary_es.ilike.%acodeco%,source_url.ilike.%acodeco.gob.pa%', { foreignTable: 'events' })
         .order('updated_at', { ascending: false })
         .range(from, to);
 
