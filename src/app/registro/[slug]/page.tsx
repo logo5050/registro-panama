@@ -97,6 +97,19 @@ export default async function DetailPage({ params }: { params: Promise<{ slug: s
   }
 
   const timeline = entity.timeline || [];
+  const officialEvents = timeline.filter(e => 
+    e.type === 'INFRACCIÓN ACODECO' || 
+    e.type === 'RESOLUCIÓN JUDICIAL' || 
+    e.type === 'SANCION' ||
+    e.type === 'ACODECO INFRACTION'
+  );
+  const newsEvents = timeline.filter(e => 
+    e.type === 'NEWS MENTION' || 
+    e.type === 'MENCION PRENSA'
+  );
+  const otherEvents = timeline.filter(e => 
+    !officialEvents.includes(e) && !newsEvents.includes(e)
+  );
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 animate-in slide-in-from-bottom-4 duration-500">
@@ -135,39 +148,86 @@ export default async function DetailPage({ params }: { params: Promise<{ slug: s
         
         {/* Main Column - Timeline */}
         <div className="lg:col-span-8">
-          <h2 className="text-2xl font-serif font-bold uppercase border-b border-black pb-2 mb-8 tracking-tighter">Historial Documentado</h2>
           
-          <div className="relative border-l-2 border-gray-200 ml-4 space-y-12 pb-8">
-            {timeline.length > 0 ? timeline.map((item) => (
-              <div key={item.id} className="relative pl-8">
-                {/* Timeline node */}
-                <div className="absolute w-3 h-3 bg-black rounded-full -left-[7px] top-1.5 ring-4 ring-white"></div>
-                
-                <div className="flex flex-wrap items-center gap-3 mb-2">
-                  <CategoryTag type={item.type} />
-                  <span className="text-[11px] font-mono text-gray-400 font-bold">{item.date}</span>
+          {/* Section 1: Official Sanctions */}
+          <section className="mb-16">
+            <h2 className="text-2xl font-serif font-bold uppercase border-b-2 border-red-700 text-red-700 pb-2 mb-8 tracking-tighter flex items-center gap-2">
+              <ShieldCheck size={24} />
+              Edictos y Sanciones Oficiales
+            </h2>
+            
+            <div className="relative border-l-2 border-red-100 ml-4 space-y-10 pb-4">
+              {officialEvents.length > 0 ? officialEvents.map((item) => (
+                <div key={item.id} className="relative pl-8">
+                  <div className="absolute w-3 h-3 bg-red-700 rounded-full -left-[7px] top-1.5 ring-4 ring-white"></div>
+                  <div className="flex flex-wrap items-center gap-3 mb-2">
+                    <CategoryTag type={item.type} />
+                    <span className="text-[11px] font-mono text-gray-400 font-bold">{item.date}</span>
+                  </div>
+                  <h3 className="text-xl font-serif font-bold mb-3 leading-snug">{item.title}</h3>
+                  <div className="flex items-center gap-4 text-[10px] font-mono bg-red-50/50 p-2 border border-red-100 uppercase tracking-tighter">
+                    <span className="text-red-700 font-bold">Expediente Oficial:</span>
+                    <span className="font-bold truncate max-w-[200px]">{item.source}</span>
+                    {item.link && (
+                      <a href={item.link} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 hover:underline text-red-700 font-bold">
+                        Ver Edicto <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
                 </div>
-                
-                <h3 className="text-xl font-serif font-bold mb-3 leading-snug">{item.title}</h3>
-                
-                <p className="text-gray-700 mb-4 leading-relaxed font-sans text-sm">
-                  {item.description}
-                </p>
-                
-                <div className="flex items-center gap-4 text-[11px] font-mono bg-white p-3 border border-gray-200 uppercase tracking-tighter">
-                  <span className="text-gray-400 font-bold">Fuente:</span>
-                  <span className="font-bold truncate max-w-[200px]">{item.source}</span>
-                  {item.link && (
-                    <a href={item.link} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 hover:underline text-black font-bold whitespace-nowrap">
-                      Ver original <ExternalLink size={12} />
-                    </a>
-                  )}
+              )) : (
+                <div className="pl-8 py-4 border border-dashed border-gray-200 bg-gray-50/30">
+                  <p className="text-gray-400 italic font-serif text-sm">No se registran sanciones administrativas de ACODECO para esta entidad.</p>
                 </div>
-              </div>
-            )) : (
-              <p className="text-gray-500 italic font-serif">No hay eventos registrados en el historial de esta entidad.</p>
-            )}
-          </div>
+              )}
+            </div>
+          </section>
+
+          {/* Section 2: News & Media */}
+          <section className="mb-16 opacity-80">
+            <h2 className="text-xl font-serif font-bold uppercase border-b border-black pb-2 mb-8 tracking-tighter flex items-center gap-2">
+              <Newspaper size={20} className="text-gray-500" />
+              Menciones en Prensa y Noticias
+            </h2>
+            
+            <div className="relative border-l-2 border-gray-200 ml-4 space-y-8">
+              {newsEvents.length > 0 ? newsEvents.map((item) => (
+                <div key={item.id} className="relative pl-8">
+                  <div className="absolute w-2 h-2 bg-gray-400 rounded-full -left-[5px] top-1.5 ring-4 ring-white"></div>
+                  <div className="flex flex-wrap items-center gap-3 mb-1">
+                    <span className="text-[9px] font-mono tracking-widest uppercase px-2 py-0.5 border border-gray-300 text-gray-500 font-bold">Noticia</span>
+                    <span className="text-[10px] font-mono text-gray-400 font-bold">{item.date}</span>
+                  </div>
+                  <h3 className="text-lg font-serif font-bold mb-2 leading-tight text-gray-800">{item.title}</h3>
+                  <div className="flex items-center gap-3 text-[10px] font-mono uppercase tracking-tighter text-gray-400">
+                    <span className="truncate max-w-[150px]">{new URL(item.source).hostname}</span>
+                    {item.link && (
+                      <a href={item.link} target="_blank" rel="noopener noreferrer" className="hover:text-black flex items-center gap-1">
+                        Leer Artículo <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )) : (
+                <div className="pl-8">
+                  <p className="text-gray-400 italic font-serif text-sm">No se registran menciones en prensa reciente.</p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Section 3: Citizen Reports (New!) */}
+          <section>
+            <h2 className="text-xl font-serif font-bold uppercase border-b border-black pb-2 mb-8 tracking-tighter flex items-center gap-2">
+              <AlertTriangle size={20} className="text-orange-500" />
+              Reportes Ciudadanos Recientes
+            </h2>
+            <div className="bg-orange-50 border-2 border-orange-200 p-6">
+              <p className="text-sm font-serif italic text-orange-800 mb-0">
+                Esta sección contiene quejas y reportes directos de consumidores actualmente en proceso de validación.
+              </p>
+            </div>
+          </section>
         </div>
 
         {/* Sidebar */}

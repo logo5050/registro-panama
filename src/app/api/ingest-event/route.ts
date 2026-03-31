@@ -41,6 +41,7 @@ export async function POST(req: Request) {
       name,
       category,
       event_type,
+      event_date,
       source_url,
       summary_es,
       summary_en,
@@ -121,6 +122,7 @@ export async function POST(req: Request) {
         {
           business_id: business.id,
           event_type,
+          event_date: event_date || new Date().toISOString().split('T')[0],
           source_url,
           summary_es: summary_es || `Evento registrado: ${name}`,
           summary_en: summary_en || `Event recorded: ${name}`,

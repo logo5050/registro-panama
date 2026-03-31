@@ -200,6 +200,7 @@ async function postToEvent(post) {
     name: businessName,
     category: 'Regulación / Consumer Protection',
     event_type: eventType,
+    event_date: date,
     source_url: link,
     summary_es: title.substring(0, 300),
     summary_en: `ACODECO: ${title.substring(0, 280)}`,

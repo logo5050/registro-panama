@@ -133,6 +133,20 @@ async function parseArticleDetails(article) {
 
   if (!bodyText) bodyText = $('body').text().trim();
 
+  // Try to find a date in the text (e.g. 15 de marzo de 2026)
+  let eventDate = new Date().toISOString().split('T')[0];
+  const dateMatch = bodyText.match(/(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+(\d{4})/i);
+  if (dateMatch) {
+    const months = {
+      enero: '01', febrero: '02', marzo: '03', abril: '04', mayo: '05', junio: '06',
+      julio: '07', agosto: '08', septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12'
+    };
+    const day = dateMatch[1].padStart(2, '0');
+    const month = months[dateMatch[2].toLowerCase()];
+    const year = dateMatch[3];
+    eventDate = `${year}-${month}-${day}`;
+  }
+
   // Claude extracts the actual sanctioned business name from the article
   const businessName = await extractBusinessFromACODECO(article.title, bodyText);
   if (!businessName) return null;
@@ -144,6 +158,7 @@ async function parseArticleDetails(article) {
     name: businessName,
     category: 'Comercio',
     event_type: 'acodeco_infraction',
+    event_date: eventDate,
     source_url: article.url,
     summary_es: `ACODECO: ${article.title.substring(0, 200)}`,
     summary_en: `ACODECO infraction reported: ${article.title.substring(0, 200)}`,

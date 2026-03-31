@@ -109,6 +109,7 @@ async function fetchByKeyword({ keyword, category, event_type }) {
         name: businessName,
         category,
         event_type,
+        event_date: date,
         source_url: link,
         summary_es: title.substring(0, 300),
         summary_en: `Capital Financiero: ${title.substring(0, 280)}`,
