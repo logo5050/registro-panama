@@ -23,6 +23,7 @@ type TimelineEvent = {
 type Entity = {
   id: string;
   name: string;
+  slug: string;
   status: string;
   summary: string;
   description_es?: string;
