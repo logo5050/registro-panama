@@ -52,6 +52,8 @@ export default function Home() {
       
       if (!res.ok) {
         setEntities([]);
+        setTotalResults(0);
+        setTotalPages(1);
         return;
       }
 
@@ -62,6 +64,8 @@ export default function Home() {
         setTotalResults(response.total || 0);
       } else {
         setEntities([]);
+        setTotalResults(0);
+        setTotalPages(1);
       }
     } catch (error) {
       console.error('Error fetching entities:', error);
