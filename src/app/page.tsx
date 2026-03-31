@@ -1,315 +1,149 @@
-import { supabasePublic } from '@/lib/supabase';
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { 
+  Search, 
+  ChevronRight, 
+} from 'lucide-react';
 import Link from 'next/link';
 
-export const dynamic = 'force-dynamic';
+type Entity = {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  summary: string;
+  date: string;
+};
 
-const PER_PAGE = 25;
+export default function Home() {
+  const [entities, setEntities] = useState<Entity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('Todas');
 
-type EventTypeFilter = 'news_mention' | 'acodeco_infraction' | 'court_ruling' | 'sanction' | '';
+  useEffect(() => {
+    fetchEntities();
+  }, [statusFilter]);
 
-type SearchParams = Promise<{
-  page?: string;
-  q?: string;
-  status?: string;
-  eventType?: string;
-}>;
-
-const CATEGORIES: { value: EventTypeFilter; labelEs: string; labelEn: string; emoji: string }[] = [
-  { value: '',                  labelEs: 'Todas',                labelEn: 'All',               emoji: '🏢' },
-  { value: 'news_mention',      labelEs: 'En Noticias',          labelEn: 'In the News',       emoji: '📰' },
-  { value: 'acodeco_infraction',labelEs: 'Infracciones ACODECO', labelEn: 'ACODECO Infractions',emoji: '⚠️' },
-  { value: 'court_ruling',      labelEs: 'Fallos Judiciales',    labelEn: 'Court Rulings',     emoji: '⚖️' },
-  { value: 'sanction',          labelEs: 'Sanciones',            labelEn: 'Sanctions',         emoji: '🚫' },
-];
-
-export default async function Home({ searchParams }: { searchParams: SearchParams }) {
-  const params = await searchParams;
-  const currentPage  = Math.max(1, parseInt(params.page || '1'));
-  const searchQuery  = params.q || '';
-  const statusFilter = params.status || '';
-  const eventTypeFilter = (params.eventType || '') as EventTypeFilter;
-  const offset = (currentPage - 1) * PER_PAGE;
-
-  // Build select: use PostgREST inner join when filtering by event type
-  // This avoids passing 700+ UUIDs in a URL query param
-  type BusinessRow = {
-    name: string;
-    slug: string;
-    category: string | null;
-    status: string | null;
-    province: string | null;
-    industry: string | null;
-    updated_at: string | null;
+  const fetchEntities = async (query = '') => {
+    setLoading(true);
+    try {
+      let url = `/api/entities?search=${query}`;
+      if (statusFilter !== 'Todas') {
+        url += `&status=${statusFilter}`;
+      }
+      const res = await fetch(url);
+      const data = await res.json();
+      setEntities(data);
+    } catch (error) {
+      console.error('Error fetching entities:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const baseFields = 'name, slug, category, status, province, industry, updated_at';
-  const selectFields = eventTypeFilter
-    ? `${baseFields}, events!inner(event_type)`
-    : baseFields;
-
-  let baseQuery = supabasePublic
-    .from('businesses')
-    .select(selectFields, { count: 'exact' })
-    .order('updated_at', { ascending: false })
-    .range(offset, offset + PER_PAGE - 1);
-
-  if (searchQuery)     baseQuery = baseQuery.ilike('name', `%${searchQuery}%`);
-  if (statusFilter)    baseQuery = baseQuery.eq('status', statusFilter);
-  if (eventTypeFilter) baseQuery = baseQuery.eq('events.event_type', eventTypeFilter);
-
-  const { data: businesses, count } = await baseQuery.returns<BusinessRow[]>();
-
-  const total      = count || 0;
-  const totalPages = Math.ceil(total / PER_PAGE);
-
-  const activeCategory = CATEGORIES.find(c => c.value === eventTypeFilter) || CATEGORIES[0];
-
-  function buildUrl(page: number, q?: string, status?: string, eventType?: string) {
-    const p = new URLSearchParams();
-    if (page > 1)    p.set('page', String(page));
-    if (q)           p.set('q', q);
-    if (status)      p.set('status', status);
-    if (eventType)   p.set('eventType', eventType);
-    return p.toString() ? `/?${p.toString()}` : '/';
-  }
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchEntities(search);
+  };
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black font-sans transition-colors duration-300">
-      <main className="max-w-4xl mx-auto px-6 py-20">
-
-        {/* Header */}
-        <div className="mb-10 text-center sm:text-left">
-          <h1 className="text-6xl font-black text-slate-900 dark:text-white tracking-tighter mb-4">
-            Registro Panamá
-          </h1>
-          <p className="text-xl text-slate-600 dark:text-slate-400 max-w-2xl leading-relaxed">
-            Directorio de transparencia y credibilidad empresarial.
-            Verifica el historial y estado de empresas en Panamá.
-          </p>
-          <p className="text-sm text-slate-400 dark:text-slate-500 mt-3">
-            {total.toLocaleString()} empresas registradas · Actualizado por agentes de IA
-          </p>
-        </div>
-
-        {/* Category Tabs */}
-        <div className="flex flex-wrap gap-2 mb-6">
-          {CATEGORIES.map((cat) => {
-            const isActive = cat.value === eventTypeFilter;
-            return (
-              <Link
-                key={cat.value}
-                href={buildUrl(1, searchQuery, statusFilter, cat.value || undefined)}
-                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
-                  isActive
-                    ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400'
-                }`}
-              >
-                <span>{cat.emoji}</span>
-                <span>{cat.labelEs}</span>
-                <span className="hidden sm:inline text-[10px] opacity-60">/ {cat.labelEn}</span>
-              </Link>
-            );
-          })}
-        </div>
-
-        {/* Search + Status Filter */}
-        <form method="GET" action="/" className="flex flex-col sm:flex-row gap-3 mb-8">
-          {/* Preserve active category tab across searches */}
-          {eventTypeFilter && (
-            <input type="hidden" name="eventType" value={eventTypeFilter} />
-          )}
-          <input
-            type="text"
-            name="q"
-            defaultValue={searchQuery}
-            placeholder="Buscar empresa... / Search business..."
-            className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <select
-            name="status"
-            defaultValue={statusFilter}
-            className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">Todos los estados</option>
-            <option value="verified">Verificado</option>
-            <option value="watchlist">En Vigilancia</option>
-            <option value="geo_glass_client">GEO Glass Client</option>
-          </select>
-          <button
-            type="submit"
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-colors"
-          >
-            Buscar
-          </button>
-          {(searchQuery || statusFilter || eventTypeFilter) && (
-            <Link
-              href="/"
-              className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium transition-colors text-center"
+    <div className="max-w-6xl mx-auto px-4 py-8 animate-in fade-in duration-500">
+      {/* Search Section */}
+      <section className="mb-16">
+        <form onSubmit={handleSearch} className="max-w-3xl mx-auto flex flex-col items-center">
+          <div className="w-full relative flex items-center">
+            <Search className="absolute left-4 text-gray-400" size={24} />
+            <input 
+              type="text" 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar empresa, institución o persona jurídica..." 
+              className="w-full pl-14 pr-4 py-5 text-xl border-2 border-black rounded-none focus:outline-none focus:ring-4 focus:ring-gray-200 transition-all font-serif"
+            />
+            <button 
+              type="submit"
+              className="absolute right-2 px-6 py-3 bg-black text-white font-bold uppercase tracking-wider hover:bg-gray-800 transition-colors"
             >
-              Limpiar
-            </Link>
-          )}
-        </form>
-
-        {/* Results header */}
-        <section className="mb-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
-              {eventTypeFilter
-                ? `${activeCategory.emoji} ${activeCategory.labelEs} — ${total.toLocaleString()} empresas`
-                : searchQuery || statusFilter
-                ? `${total.toLocaleString()} resultados`
-                : 'Empresas Recientes / Recent Businesses'}
-            </h2>
-            {totalPages > 1 && (
-              <span className="text-xs text-slate-400 dark:text-slate-500">
-                Página {currentPage} de {totalPages}
-              </span>
-            )}
+              Buscar
+            </button>
           </div>
+          
+          <div className="mt-6 flex flex-wrap justify-center gap-3 text-sm font-mono">
+            <span className="text-gray-500 uppercase tracking-widest mr-2">Filtros:</span>
+            {['Todas', 'Limpio', 'Bajo Observación', 'En Vigilancia', 'Sancionada'].map(filter => (
+              <button 
+                key={filter} 
+                onClick={() => setStatusFilter(filter)}
+                className={`border px-3 py-1 transition-colors uppercase ${statusFilter === filter ? 'bg-black text-white border-black' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
+        </form>
+      </section>
 
-          {/* Business list */}
-          <div className="grid gap-4">
-            {businesses && businesses.length > 0 ? (
-              businesses.map((biz) => (
-                <Link
-                  key={biz.slug}
-                  href={`/registro/${biz.slug}`}
-                  className="group block p-6 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl hover:border-blue-500 dark:hover:border-blue-500 transition-all shadow-sm hover:shadow-md"
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-xl font-bold text-slate-900 dark:text-white group-hover:text-blue-600 transition-colors truncate">
-                        {biz.name}
-                      </h3>
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {biz.category && (
-                          <span className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                            {biz.category}
-                          </span>
-                        )}
-                        {biz.province && (
-                          <span className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                            📍 {biz.province}
-                          </span>
-                        )}
-                        {biz.industry && (
-                          <span className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                            {biz.industry}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <span className={`text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-tighter border shrink-0 ml-4 ${
-                      biz.status === 'watchlist'
-                        ? 'bg-red-50 text-red-600 border-red-100 dark:bg-red-900/20 dark:text-red-400 dark:border-red-900'
-                        : biz.status === 'geo_glass_client'
-                        ? 'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-900'
-                        : 'bg-green-50 text-green-600 border-green-100 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900'
+      {/* Grid Section - Newspaper Style */}
+      <section>
+        <h2 className="text-2xl font-serif font-bold uppercase border-b-2 border-black pb-2 mb-8 flex justify-between items-end">
+          <span>Actualizaciones Recientes</span>
+          <span className="text-sm font-mono font-normal text-gray-500">
+            {loading ? 'Cargando...' : `${entities.length} resultados`}
+          </span>
+        </h2>
+
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {[1, 2, 3, 4, 5, 6].map(i => (
+              <div key={i} className="animate-pulse flex flex-col gap-4">
+                <div className="h-4 bg-gray-200 w-1/4"></div>
+                <div className="h-8 bg-gray-200 w-3/4"></div>
+                <div className="h-20 bg-gray-200 w-full"></div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {entities.map((entity, idx) => (
+              <Link 
+                href={`/registro/${entity.slug}`}
+                key={entity.id} 
+                className={`group cursor-pointer flex flex-col ${idx % 3 !== 0 ? 'md:border-l border-gray-300 md:pl-8' : ''} ${idx >= 3 ? 'border-t border-gray-300 pt-8' : ''}`}
+              >
+                <article className="flex flex-col h-full">
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="text-xs font-mono uppercase tracking-widest text-gray-500">{entity.date}</span>
+                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 border ${
+                      entity.status === 'En Vigilancia' ? 'border-orange-500 text-orange-700' :
+                      entity.status === 'Sancionada' ? 'border-red-600 text-red-600' :
+                      'border-black text-black'
                     }`}>
-                      {biz.status?.replace(/_/g, ' ') || 'watchlist'}
+                      {entity.status}
                     </span>
                   </div>
-                </Link>
-              ))
-            ) : (
-              <div className="p-12 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-3xl">
-                <p className="text-slate-400 italic mb-2">No se encontraron resultados.</p>
-                <Link href="/" className="text-sm text-blue-500 hover:underline">Ver todas las empresas</Link>
-              </div>
-            )}
+                  <h3 className="text-2xl font-serif font-bold mb-3 group-hover:underline decoration-2 underline-offset-4 leading-tight">
+                    {entity.name}
+                  </h3>
+                  <p className="font-sans text-gray-700 text-sm leading-relaxed mb-4 flex-grow line-clamp-4">
+                    {entity.summary || 'Ver expediente completo para más detalles sobre el historial y estado de esta entidad.'}
+                  </p>
+                  <div className="flex items-center text-xs font-bold uppercase tracking-wider mt-auto group-hover:translate-x-1 transition-transform">
+                    Ver Expediente <ChevronRight size={14} className="ml-1" />
+                  </div>
+                </article>
+              </Link>
+            ))}
           </div>
-        </section>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <nav className="flex items-center justify-between mt-8 pt-6 border-t border-slate-100 dark:border-slate-800">
-            <Link
-              href={currentPage > 1 ? buildUrl(currentPage - 1, searchQuery, statusFilter, eventTypeFilter || undefined) : '#'}
-              className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-colors ${
-                currentPage > 1
-                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  : 'opacity-30 pointer-events-none bg-slate-100 dark:bg-slate-800 text-slate-400'
-              }`}
-            >
-              ← Anterior
-            </Link>
-
-            <div className="flex items-center gap-1">
-              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-                let page: number;
-                if (totalPages <= 7) {
-                  page = i + 1;
-                } else if (currentPage <= 4) {
-                  page = i + 1;
-                } else if (currentPage >= totalPages - 3) {
-                  page = totalPages - 6 + i;
-                } else {
-                  page = currentPage - 3 + i;
-                }
-                return (
-                  <Link
-                    key={page}
-                    href={buildUrl(page, searchQuery, statusFilter, eventTypeFilter || undefined)}
-                    className={`w-9 h-9 flex items-center justify-center rounded-lg text-sm font-medium transition-colors ${
-                      page === currentPage
-                        ? 'bg-blue-600 text-white'
-                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    {page}
-                  </Link>
-                );
-              })}
-            </div>
-
-            <Link
-              href={currentPage < totalPages ? buildUrl(currentPage + 1, searchQuery, statusFilter, eventTypeFilter || undefined) : '#'}
-              className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-colors ${
-                currentPage < totalPages
-                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  : 'opacity-30 pointer-events-none bg-slate-100 dark:bg-slate-800 text-slate-400'
-              }`}
-            >
-              Siguiente →
-            </Link>
-          </nav>
         )}
 
-        {/* How it works */}
-        <section className="mt-16 p-8 bg-slate-900 dark:bg-blue-950/20 rounded-3xl text-white">
-          <h3 className="text-2xl font-bold mb-4">¿Cómo funciona? / How it works</h3>
-          <div className="grid md:grid-cols-3 gap-8 text-slate-300 text-sm leading-relaxed">
-            <div>
-              <p className="font-bold text-white mb-2">1. Monitoreo Automático</p>
-              <p>Agentes de IA monitorean fuentes oficiales (ACODECO, Órgano Judicial, noticias) e ingieren eventos automáticamente.</p>
-            </div>
-            <div>
-              <p className="font-bold text-white mb-2">2. Registro Público</p>
-              <p>Cada empresa tiene un perfil único con su historial de eventos, accesible para consumidores y plataformas de IA.</p>
-            </div>
-            <div>
-              <p className="font-bold text-white mb-2">3. Integración GEO Glass</p>
-              <p>Los datos alimentan auditorías de visibilidad en IA, ayudando a empresas a mejorar su presencia digital.</p>
-            </div>
+        {!loading && entities.length === 0 && (
+          <div className="text-center py-20 border-2 border-dashed border-gray-200">
+            <p className="text-gray-500 font-serif italic text-lg">No se encontraron entidades que coincidan con su búsqueda.</p>
           </div>
-        </section>
-
-        {/* API section */}
-        <section className="mt-8 p-6 border border-slate-200 dark:border-slate-800 rounded-2xl">
-          <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-3">API Pública</h3>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
-            Accede a los datos del registro vía nuestra API JSON gratuita.
-          </p>
-          <div className="space-y-2 font-mono text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 p-4 rounded-xl">
-            <p><span className="text-green-600">GET</span> /api/businesses</p>
-            <p><span className="text-green-600">GET</span> /api/businesses/[slug]</p>
-            <p><span className="text-green-600">GET</span> /api/businesses?province=Panamá&status=verified</p>
-          </div>
-        </section>
-
-      </main>
+        )}
+      </section>
     </div>
   );
 }

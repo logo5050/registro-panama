@@ -15,8 +15,8 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 // In-memory cache to avoid duplicate API calls within the same run
 const cache = new Map();
 
-// Polite rate limiting: max ~10 req/sec for Haiku
-const RATE_LIMIT_MS = 120;
+// Rate limiting: stay under 50 req/min (free tier limit)
+const RATE_LIMIT_MS = 2000; // ~46 req/min — safely under 50/min limit
 let lastCallTime = 0;
 
 async function callClaude(systemPrompt, userMessage, cacheKey) {
@@ -33,26 +33,42 @@ async function callClaude(systemPrompt, userMessage, cacheKey) {
   }
   lastCallTime = Date.now();
 
-  try {
-    const msg = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 60,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const msg = await client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 60,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
 
-    const result = msg.content[0]?.text?.trim() || 'NONE';
+      const result = msg.content[0]?.text?.trim() || 'NONE';
 
-    // Reject generic or obviously bad responses
-    const GENERIC = ['NONE', 'N/A', 'Panama', 'Panamá', 'La empresa', 'El banco', 'Las empresas', 'Los empresarios'];
-    const entity = (result === 'NONE' || result.length < 2 || GENERIC.includes(result)) ? null : result;
+      // Reject generic or obviously bad responses
+      // Use startsWith('NONE') to catch "NONE The document..." style responses
+      const GENERIC = ['N/A', 'Panama', 'Panamá', 'La empresa', 'El banco', 'Las empresas', 'Los empresarios'];
+      const entity = (
+        result.startsWith('NONE') ||
+        result.length < 2 ||
+        GENERIC.includes(result) ||
+        result.length > 120  // Reject anything that's clearly a sentence, not a name
+      ) ? null : result;
 
-    cache.set(cacheKey, entity);
-    return entity;
-  } catch (err) {
-    console.warn(`  ⚠️  Claude extraction failed (${err.message}) — skipping article`);
-    cache.set(cacheKey, null);
-    return null;
+      cache.set(cacheKey, entity);
+      return entity;
+    } catch (err) {
+      // Retry on rate limit (429) with exponential backoff
+      if (err.status === 429 && attempt < MAX_RETRIES) {
+        const wait = attempt * 30_000; // 30s, 60s
+        console.warn(`  ⏳ Rate limited — waiting ${wait / 1000}s before retry ${attempt + 1}/${MAX_RETRIES}...`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      console.warn(`  ⚠️  Claude extraction failed (${err.message}) — skipping article`);
+      cache.set(cacheKey, null);
+      return null;
+    }
   }
 }
 
@@ -87,19 +103,103 @@ Excerpt: "${excerpt.substring(0, 250)}"`;
  * @returns {Promise<string|null>} Business name or null
  */
 export async function extractBusinessFromACODECO(title, content = '') {
-  const systemPrompt = `You extract the name of the business or company being investigated or sanctioned in ACODECO (Panama consumer protection agency) records.
+  const systemPrompt = `You extract the name of the business or company being investigated or sanctioned in ACODECO (Panama consumer protection agency) legal documents.
 
 Rules:
-- Return ONLY the business name. Examples: "Farmacia El Sol", "Supermercado Rey S.A.", "Bar y Discoteca La Esquina"
-- Look for the "agente económico" (economic agent / business) in the legal text
-- Do NOT return "ACODECO", case/expediente numbers, or article titles
-- Do NOT return the names of individuals (people, not businesses) unless they operate as a business
+- Return ONLY the business name. Examples: "Farmacia El Sol", "Supermercado Rey S.A.", "Bar y Discoteca La Esquina", "Honor", "Samsung Electronics"
+- Look for: "agente económico", "la empresa", "la sociedad", "el establecimiento", "el denunciado", "contra:" — these phrases usually precede the business name
+- Also look for: company websites (e.g. www.honor.com → "Honor"), brand names in product references, store/restaurant names
+- Do NOT return "ACODECO", government agencies, case/expediente numbers, or article titles
+- Do NOT return individual person names unless they clearly operate as a business (e.g. "José Pérez" alone = NONE, "Minisuper José Pérez" = valid)
 - Return "NONE" if no specific business name can be found`;
 
   const userMessage = `Title: "${title}"
-Content: "${content.substring(0, 800)}"`;
+Content: "${content.substring(0, 3000)}"`;
 
   return callClaude(systemPrompt, userMessage, `acodeco:${title}`);
+}
+
+/**
+ * Extract business name from a PDF document using Claude's native PDF vision.
+ * Sends the raw PDF bytes — works on scanned/image PDFs that pdf-parse can't handle.
+ *
+ * @param {string} title - Post title (for cache key + context)
+ * @param {Buffer} pdfBuffer - Raw PDF file bytes
+ * @returns {Promise<string|null>} Business name or null
+ */
+export async function extractBusinessFromPDF(title, pdfBuffer) {
+  const cacheKey = `pdf:${title}`;
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  // Rate limiting
+  const now = Date.now();
+  const elapsed = now - lastCallTime;
+  if (elapsed < RATE_LIMIT_MS) {
+    await new Promise(r => setTimeout(r, RATE_LIMIT_MS - elapsed));
+  }
+  lastCallTime = Date.now();
+
+  const systemPrompt = `You extract the name of the business or company being investigated or sanctioned in ACODECO (Panama consumer protection agency) legal documents.
+
+Rules:
+- Return ONLY the business name. Examples: "Farmacia El Sol", "Supermercado Rey S.A.", "Bar y Discoteca La Esquina", "Honor", "Samsung Electronics"
+- Look for: "agente económico", "la empresa", "la sociedad", "el establecimiento", "el denunciado", "contra:" — these phrases usually precede the business name
+- Also look for: company websites (e.g. www.honor.com → "Honor"), brand names in product references, store/restaurant names
+- Do NOT return "ACODECO", government agencies, case/expediente numbers, or article titles
+- Do NOT return individual person names unless they clearly operate as a business (e.g. "José Pérez" alone = NONE, "Minisuper José Pérez" = valid)
+- Return "NONE" if no specific business name can be found`;
+
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const msg = await client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 60,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: {
+                type: 'base64',
+                media_type: 'application/pdf',
+                data: pdfBuffer.toString('base64'),
+              },
+            },
+            {
+              type: 'text',
+              text: `This is an ACODECO legal document titled "${title}". What is the name of the business being investigated or sanctioned? Return ONLY the business name or "NONE".`,
+            },
+          ],
+        }],
+      });
+
+      const result = msg.content[0]?.text?.trim() || 'NONE';
+      const GENERIC = ['N/A', 'Panama', 'Panamá', 'La empresa', 'El banco', 'Las empresas', 'Los empresarios'];
+      const entity = (
+        result.startsWith('NONE') ||
+        result.length < 2 ||
+        GENERIC.includes(result) ||
+        result.length > 120
+      ) ? null : result;
+
+      cache.set(cacheKey, entity);
+      return entity;
+    } catch (err) {
+      if (err.status === 429 && attempt < MAX_RETRIES) {
+        const wait = attempt * 30_000;
+        console.warn(`  ⏳ Rate limited — waiting ${wait / 1000}s before retry ${attempt + 1}/${MAX_RETRIES}...`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      console.warn(`  ⚠️  PDF vision extraction failed (${err.message}) — skipping`);
+      cache.set(cacheKey, null);
+      return null;
+    }
+  }
 }
 
 /**

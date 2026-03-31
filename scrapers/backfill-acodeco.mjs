@@ -2,17 +2,19 @@
  * ACODECO Backfill Scraper — Registro Panamá
  *
  * Pulls the COMPLETE ACODECO post archive via WordPress REST API.
- * Uses clean JSON — no HTML scraping needed.
+ * Downloads PDFs from edicto posts and extracts text for AI entity extraction.
  *
  * What it fetches:
  *   - 892 total posts (as of March 2026)
- *   - 688 are official EDICTO sanction orders
+ *   - ~688 are official EDICTO sanction orders (PDF-based)
  *   - Archive goes back to October 2024
  *
  * Run once from your terminal:
  *   cd scrapers && npm install
+ *   set NODE_TLS_REJECT_UNAUTHORIZED=0
  *   INGEST_SECRET=PanamaRegistry2026SecureToken \
  *   INGEST_API_URL=https://registro-panama.vercel.app/api/ingest-event \
+ *   ANTHROPIC_API_KEY=sk-ant-... \
  *   node backfill-acodeco.mjs
  *
  * Optional flags:
@@ -22,26 +24,18 @@
  */
 
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
-import { extractBusinessFromACODECO, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
+import { extractBusinessFromACODECO, extractBusinessFromPDF, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
 
 const ACODECO_API = 'https://www.acodeco.gob.pa/inicio/wp-json/wp/v2/posts';
 const PER_PAGE = 100;
 const DELAY_MS = 1500; // Be polite — 1.5s between API pages
+const PDF_DELAY_MS = 500; // Delay between PDF downloads
 
 // Parse CLI flags
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
 const START_PAGE = parseInt(args.find(a => a.startsWith('--start-page='))?.split('=')[1] || '1');
 const YEAR_FILTER = args.find(a => a.startsWith('--year='))?.split('=')[1] || null;
-
-// Keywords that indicate this post is about a specific business infraction
-const INFRACTION_KEYWORDS = [
-  'sanciona', 'sancionó', 'sanción', 'multa', 'multó', 'multada',
-  'advierte', 'infracción', 'resolución', 'edicto', 'expediente',
-  'investigación', 'denuncia', 'embargo', 'decomiso', 'cierre',
-  'clausura', 'publicidad engañosa', 'irregularidad', 'incumplimiento',
-  'consumidor', 'agente económico'
-];
 
 /**
  * Determine the event type based on post content.
@@ -54,7 +48,84 @@ function classifyPost(title, content) {
   return 'news_mention';
 }
 
-// Business name extraction is now handled by Claude — see lib/extract-entity.mjs
+/**
+ * Extract PDF URL from WordPress post HTML content.
+ *
+ * ACODECO uses pdfjs-viewer-for-elementor plugin which embeds PDFs as:
+ *   <iframe src=".../pdfjs/web/viewer.html?file=ACTUAL_PDF_URL">
+ *
+ * The real PDF is in the ?file= query parameter, NOT the iframe src itself.
+ */
+function extractPdfUrl(htmlContent) {
+  // Pattern 1: pdfjs viewer — extract the ?file= parameter (this is the actual PDF)
+  const viewerMatch = htmlContent.match(/[?&]file=([^"'&\s]+\.pdf[^"'&\s]*)/i);
+  if (viewerMatch) {
+    // Decode any URL encoding
+    return decodeURIComponent(viewerMatch[1]);
+  }
+
+  // Pattern 2: Direct wp-content/uploads PDF link
+  const uploadsMatch = htmlContent.match(/(https?:\/\/[^"'\s]+wp-content\/uploads\/[^"'\s]+\.pdf)/i);
+  if (uploadsMatch) return uploadsMatch[1];
+
+  // Pattern 3: Direct href to a .pdf file
+  const hrefMatch = htmlContent.match(/href=["']([^"']+\.pdf)["']/i);
+  if (hrefMatch) return hrefMatch[1];
+
+  return null;
+}
+
+/**
+ * Download a PDF and extract its text content.
+ * Returns the extracted text or null on failure.
+ */
+/**
+ * Normalize a PDF URL: resolve relative paths and encode special characters
+ * in the filename (e.g. ° → %C2%B0) so the server returns 200, not 404.
+ */
+function normalizePdfUrl(url) {
+  // Resolve relative URLs
+  if (url.startsWith('/')) {
+    url = `https://www.acodeco.gob.pa${url}`;
+  }
+  try {
+    const parsed = new URL(url);
+    // Re-encode each path segment to handle ° and other special chars
+    parsed.pathname = parsed.pathname
+      .split('/')
+      .map(seg => encodeURIComponent(decodeURIComponent(seg)))
+      .join('/');
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Download a PDF and return the raw buffer for Claude Vision.
+ */
+async function downloadPdf(pdfUrl) {
+  try {
+    pdfUrl = normalizePdfUrl(pdfUrl);
+    const resp = await fetch(pdfUrl, {
+      headers: { 'User-Agent': 'RegistroPanama/1.0 (Public Registry; +https://registro-panama.vercel.app)' },
+    });
+    if (!resp.ok) {
+      console.warn(`    📄 PDF download failed: HTTP ${resp.status}`);
+      return null;
+    }
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    // Verify it's a real PDF
+    if (!buffer.slice(0, 5).toString('ascii').startsWith('%PDF')) {
+      console.warn(`    📄 Not a valid PDF (bad header)`);
+      return null;
+    }
+    return buffer;
+  } catch (err) {
+    console.warn(`    📄 PDF download error: ${err.message}`);
+    return null;
+  }
+}
 
 /**
  * Fetch one page of posts from the ACODECO WordPress REST API.
@@ -79,22 +150,51 @@ async function fetchPage(page) {
   return { posts, totalPages, total };
 }
 
+// Stats
+let pdfDownloaded = 0;
+let pdfFailed = 0;
+let pdfSkipped = 0;
+
 /**
  * Convert a WordPress post to a Registro Panama event object.
- * Now uses Claude for entity extraction — returns a Promise.
+ * For edicto posts (PDF-based): downloads PDF → sends to Claude Vision.
+ * For news posts (HTML text): sends text to Claude text extraction.
  */
 async function postToEvent(post) {
   const title = post.title?.rendered || '';
   const rawContent = post.content?.rendered || '';
-  const content = rawContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const htmlStripped = rawContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const date = post.date?.split('T')[0] || new Date().toISOString().split('T')[0];
   const link = post.link || `https://www.acodeco.gob.pa/inicio/?p=${post.id}`;
 
-  // Claude extracts the actual sanctioned business name
-  const businessName = await extractBusinessFromACODECO(title, content);
+  let businessName = null;
+
+  // Strategy: if it's an edicto with a PDF, use Claude Vision on the PDF
+  const isEdicto = htmlStripped.length < 200 || title.toLowerCase().includes('edicto');
+  const pdfUrl = isEdicto ? extractPdfUrl(rawContent) : null;
+
+  if (pdfUrl) {
+    await new Promise(r => setTimeout(r, PDF_DELAY_MS));
+    const pdfBuffer = await downloadPdf(pdfUrl);
+    if (pdfBuffer) {
+      pdfDownloaded++;
+      // Send raw PDF to Claude Vision — reads scanned images natively
+      businessName = await extractBusinessFromPDF(title, pdfBuffer);
+    } else {
+      pdfFailed++;
+    }
+  } else if (isEdicto) {
+    pdfSkipped++;
+  }
+
+  // Fallback: for non-edicto posts or if PDF extraction failed, use text extraction
+  if (!businessName && htmlStripped.length > 50) {
+    businessName = await extractBusinessFromACODECO(title, htmlStripped);
+  }
+
   if (!businessName) return null;
 
-  const eventType = classifyPost(title, content);
+  const eventType = classifyPost(title, htmlStripped);
 
   return {
     name: businessName,
@@ -107,7 +207,7 @@ async function postToEvent(post) {
       scraper: 'backfill-acodeco',
       wp_post_id: post.id,
       post_date: date,
-      content_excerpt: content.substring(0, 400),
+      content_excerpt: htmlStripped.substring(0, 400),
     },
   };
 }
@@ -117,6 +217,7 @@ async function main() {
   requireAnthropicKey();
   console.log('🏛️  ACODECO Backfill Scraper — Registro Panamá');
   console.log('================================================');
+  console.log('📄 PDF extraction enabled — will download edicto PDFs\n');
   if (DRY_RUN) console.log('🔍 DRY RUN MODE — nothing will be posted\n');
   if (YEAR_FILTER) console.log(`📅 Year filter: ${YEAR_FILTER}\n`);
   if (START_PAGE > 1) console.log(`▶️  Resuming from page ${START_PAGE}\n`);
@@ -152,6 +253,7 @@ async function main() {
     }
 
     console.log(`    → ${allEvents.length} events collected so far (${skipped} skipped)`);
+    console.log(`    📄 PDFs: ${pdfDownloaded} downloaded, ${pdfFailed} failed, ${pdfSkipped} no PDF link`);
 
     // Polite delay between pages
     if (page < totalPages) {
@@ -161,7 +263,8 @@ async function main() {
 
   console.log(`\n✅ Fetched ${pagesFetched} pages`);
   console.log(`📋 Events ready to ingest: ${allEvents.length}`);
-  console.log(`⏭️  Skipped (no business name or filtered): ${skipped}\n`);
+  console.log(`⏭️  Skipped (no business name or filtered): ${skipped}`);
+  console.log(`📄 PDF stats: ${pdfDownloaded} parsed, ${pdfFailed} failed, ${pdfSkipped} no link\n`);
 
   if (allEvents.length === 0) {
     console.log('No events to ingest. Done.');
@@ -169,8 +272,8 @@ async function main() {
   }
 
   if (DRY_RUN) {
-    console.log('📋 Sample events (first 5):');
-    allEvents.slice(0, 5).forEach((e, i) => {
+    console.log('📋 Sample events (first 10):');
+    allEvents.slice(0, 10).forEach((e, i) => {
       console.log(`\n  [${i + 1}] ${e.name}`);
       console.log(`       Type: ${e.event_type}`);
       console.log(`       Summary: ${e.summary_es.substring(0, 80)}...`);
