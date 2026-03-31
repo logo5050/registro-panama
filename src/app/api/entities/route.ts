@@ -34,11 +34,11 @@ export async function GET(req: NextRequest) {
         .eq('events.event_type', 'news_mention');
     } else if (statusFilter === 'Acodeco') {
       // Filter by ACODECO infractions, sanctions, or court rulings
-      // We also include ILIKE 'acodeco' just in case of mapping issues
+      // Using a simpler .in() which is more reliable across joins in PostgREST
       queryBuilder = supabasePublic
         .from('businesses')
-        .select(`${baseFields}, events!inner(event_type, summary_es)`, { count: 'exact' })
-        .or('event_type.in.("acodeco_infraction","sanction","RESOLUCIÓN JUDICIAL","INFRACCIÓN ACODECO","court_ruling"),summary_es.ilike.%acodeco%', { foreignTable: 'events' });
+        .select(`${baseFields}, events!inner(event_type)`, { count: 'exact' })
+        .in('events.event_type', ['acodeco_infraction', 'sanction', 'RESOLUCIÓN JUDICIAL', 'INFRACCIÓN ACODECO', 'court_ruling']);
     } else if (statusFilter === 'Comunidad') {
       // Filter by community reports from WhatsApp/Instagram
       queryBuilder = supabasePublic
@@ -52,7 +52,6 @@ export async function GET(req: NextRequest) {
         .select(baseFields, { count: 'exact' });
         
       if (statusFilter && statusFilter !== 'TODAS') {
-        // Fallback for any other specific status strings
         queryBuilder = queryBuilder.eq('status', statusFilter);
       }
     }
@@ -72,7 +71,28 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const formattedEntities = (entities || []).map((entity: any) => ({
+    // FALLBACK for ACODECO if no results found with specific types
+    // Sometimes scrapers might have tagged them as news_mention but with ACODECO in summary
+    let finalData = entities || [];
+    let finalCount = count || 0;
+
+    if (statusFilter === 'Acodeco' && (!entities || entities.length === 0)) {
+      const fallbackQuery = supabasePublic
+        .from('businesses')
+        .select(`${baseFields}, events!inner(summary_es)`, { count: 'exact' })
+        .ilike('events.summary_es', '%acodeco%')
+        .range(from, to);
+      
+      if (search) fallbackQuery.ilike('name', `%${search}%`);
+      
+      const { data: fbData, count: fbCount } = await fallbackQuery;
+      if (fbData) {
+        finalData = fbData;
+        finalCount = fbCount || 0;
+      }
+    }
+
+    const formattedEntities = (finalData || []).map((entity: any) => ({
       id: entity.id,
       name: entity.name,
       slug: entity.slug,
@@ -81,15 +101,15 @@ export async function GET(req: NextRequest) {
       date: entity.updated_at ? new Date(entity.updated_at).toISOString().split('T')[0] : null
     }));
 
-    // Post-process to ensure uniqueness (joins sometimes duplicate parent rows)
+    // Post-process to ensure uniqueness
     const uniqueEntities = Array.from(new Map(formattedEntities.map(item => [item.id, item])).values());
 
     return NextResponse.json({
       data: uniqueEntities,
-      total: count || 0,
+      total: finalCount,
       page,
       limit,
-      totalPages: Math.ceil((count || 0) / limit)
+      totalPages: Math.ceil(finalCount / limit)
     });
   } catch (err: any) {
     console.error('Runtime error in /api/entities:', err);
