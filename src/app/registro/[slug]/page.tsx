@@ -4,7 +4,8 @@ import {
   AlertTriangle, 
   ArrowLeft,
   ExternalLink,
-  Info
+  Info,
+  Newspaper
 } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
