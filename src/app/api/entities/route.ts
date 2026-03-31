@@ -27,17 +27,18 @@ export async function GET(req: NextRequest) {
     let queryBuilder;
 
     if (statusFilter === 'Noticias') {
-      // Filter by news mentions (El Económico, etc.)
+      // Filter by news mentions
       queryBuilder = supabasePublic
         .from('businesses')
         .select(`${baseFields}, events!inner(event_type)`, { count: 'exact' })
         .eq('events.event_type', 'news_mention');
     } else if (statusFilter === 'Acodeco') {
-      // Filter by ACODECO infractions or sanctions
+      // Filter by ACODECO infractions, sanctions, or court rulings
+      // We also include ILIKE 'acodeco' just in case of mapping issues
       queryBuilder = supabasePublic
         .from('businesses')
-        .select(`${baseFields}, events!inner(event_type)`, { count: 'exact' })
-        .in('events.event_type', ['acodeco_infraction', 'sanction', 'RESOLUCIÓN JUDICIAL', 'INFRACCIÓN ACODECO']);
+        .select(`${baseFields}, events!inner(event_type, summary_es)`, { count: 'exact' })
+        .or('event_type.in.("acodeco_infraction","sanction","RESOLUCIÓN JUDICIAL","INFRACCIÓN ACODECO","court_ruling"),summary_es.ilike.%acodeco%', { foreignTable: 'events' });
     } else if (statusFilter === 'Comunidad') {
       // Filter by community reports from WhatsApp/Instagram
       queryBuilder = supabasePublic
@@ -80,7 +81,7 @@ export async function GET(req: NextRequest) {
       date: entity.updated_at ? new Date(entity.updated_at).toISOString().split('T')[0] : null
     }));
 
-    // Post-process to ensure uniqueness (sometimes joins duplicate parent rows)
+    // Post-process to ensure uniqueness (joins sometimes duplicate parent rows)
     const uniqueEntities = Array.from(new Map(formattedEntities.map(item => [item.id, item])).values());
 
     return NextResponse.json({
