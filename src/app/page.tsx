@@ -36,15 +36,28 @@ export default function Home() {
   const fetchEntities = async (query = '') => {
     setLoading(true);
     try {
-      let url = `/api/entities?search=${query}`;
+      let url = `/api/entities?search=${encodeURIComponent(query)}`;
       if (statusFilter !== 'TODAS') {
-        url += `&status=${statusFilter}`;
+        url += `&status=${encodeURIComponent(statusFilter)}`;
       }
       const res = await fetch(url);
+      
+      if (!res.ok) {
+        console.error('API responded with error:', res.status);
+        setEntities([]);
+        return;
+      }
+
       const data = await res.json();
-      setEntities(data);
+      if (Array.isArray(data)) {
+        setEntities(data);
+      } else {
+        console.error('API data is not an array:', data);
+        setEntities([]);
+      }
     } catch (error) {
       console.error('Error fetching entities:', error);
+      setEntities([]);
     } finally {
       setLoading(false);
     }
