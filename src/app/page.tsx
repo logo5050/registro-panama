@@ -194,7 +194,6 @@ export default function Home() {
                 >
                   <article className="flex flex-col h-full">
                     <div className="flex justify-between items-start mb-3">
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-gray-400 font-bold">{entity.date}</span>
                       <span className={`text-[10px] uppercase font-bold px-2 py-0.5 border ${
                         entity.status === 'En Vigilancia' ? 'border-orange-500 text-orange-700' :
                         entity.status === 'Sancionada' ? 'border-red-600 text-red-600' :
