@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Search, 
-  ChevronRight, 
+  ChevronRight,
+  ChevronLeft,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -21,6 +22,11 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('TODAS');
+  
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalResults, setTotalResults] = useState(0);
 
   const FILTER_OPTIONS = [
     { label: 'TODAS', value: 'TODAS' },
@@ -30,29 +36,31 @@ export default function Home() {
   ];
 
   useEffect(() => {
-    fetchEntities();
+    // Reset to page 1 when filter changes
+    setCurrentPage(1);
+    fetchEntities(search, 1);
   }, [statusFilter]);
 
-  const fetchEntities = async (query = '') => {
+  const fetchEntities = async (query = '', page = 1) => {
     setLoading(true);
     try {
-      let url = `/api/entities?search=${encodeURIComponent(query)}`;
+      let url = `/api/entities?search=${encodeURIComponent(query)}&page=${page}&limit=9`;
       if (statusFilter !== 'TODAS') {
         url += `&status=${encodeURIComponent(statusFilter)}`;
       }
       const res = await fetch(url);
       
       if (!res.ok) {
-        console.error('API responded with error:', res.status);
         setEntities([]);
         return;
       }
 
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setEntities(data);
+      const response = await res.json();
+      if (response && Array.isArray(response.data)) {
+        setEntities(response.data);
+        setTotalPages(response.totalPages || 1);
+        setTotalResults(response.total || 0);
       } else {
-        console.error('API data is not an array:', data);
         setEntities([]);
       }
     } catch (error) {
@@ -60,12 +68,21 @@ export default function Home() {
       setEntities([]);
     } finally {
       setLoading(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchEntities(search);
+    setCurrentPage(1);
+    fetchEntities(search, 1);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+      fetchEntities(search, newPage);
+    }
   };
 
   return (
@@ -147,14 +164,14 @@ export default function Home() {
       <section>
         <h2 className="text-2xl font-serif font-bold uppercase border-b-2 border-black pb-2 mb-8 flex justify-between items-end">
           <span>Actualizaciones Recientes</span>
-          <span className="text-sm font-mono font-normal text-gray-500">
-            {loading ? 'Cargando...' : `${entities.length} resultados`}
+          <span className="text-sm font-mono font-normal text-gray-500 uppercase font-bold">
+            {loading ? 'Cargando...' : `Página ${currentPage} de ${totalPages} — ${totalResults} resultados`}
           </span>
         </h2>
 
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {[1, 2, 3, 4, 5, 6].map(i => (
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => (
               <div key={i} className="animate-pulse flex flex-col gap-4">
                 <div className="h-4 bg-gray-100 w-1/4"></div>
                 <div className="h-8 bg-gray-100 w-3/4"></div>
@@ -163,37 +180,92 @@ export default function Home() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {entities.map((entity, idx) => (
-              <Link 
-                href={`/registro/${entity.slug}`}
-                key={entity.id} 
-                className={`group cursor-pointer flex flex-col ${idx % 3 !== 0 ? 'md:border-l border-gray-200 md:pl-8' : ''} ${idx >= 3 ? 'border-t border-gray-200 pt-8' : ''}`}
-              >
-                <article className="flex flex-col h-full">
-                  <div className="flex justify-between items-start mb-3">
-                    <span className="text-[10px] font-mono uppercase tracking-widest text-gray-400 font-bold">{entity.date}</span>
-                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 border ${
-                      entity.status === 'En Vigilancia' ? 'border-orange-500 text-orange-700' :
-                      entity.status === 'Sancionada' ? 'border-red-600 text-red-600' :
-                      'border-black text-black'
-                    }`}>
-                      {entity.status}
-                    </span>
-                  </div>
-                  <h3 className="text-2xl font-serif font-bold mb-3 group-hover:underline decoration-2 underline-offset-4 leading-tight">
-                    {entity.name}
-                  </h3>
-                  <p className="font-sans text-gray-700 text-sm leading-relaxed mb-4 flex-grow line-clamp-4">
-                    {entity.summary || 'Ver expediente completo para más detalles sobre el historial y estado de esta entidad.'}
-                  </p>
-                  <div className="flex items-center text-xs font-bold uppercase tracking-wider mt-auto group-hover:translate-x-1 transition-transform">
-                    Ver Expediente <ChevronRight size={14} className="ml-1" />
-                  </div>
-                </article>
-              </Link>
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              {entities.map((entity, idx) => (
+                <Link 
+                  href={`/registro/${entity.slug}`}
+                  key={entity.id} 
+                  className={`group cursor-pointer flex flex-col ${idx % 3 !== 0 ? 'md:border-l border-gray-200 md:pl-8' : ''} ${idx >= 3 ? 'border-t border-gray-200 pt-8' : ''}`}
+                >
+                  <article className="flex flex-col h-full">
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-gray-400 font-bold">{entity.date}</span>
+                      <span className={`text-[10px] uppercase font-bold px-2 py-0.5 border ${
+                        entity.status === 'En Vigilancia' ? 'border-orange-500 text-orange-700' :
+                        entity.status === 'Sancionada' ? 'border-red-600 text-red-600' :
+                        'border-black text-black'
+                      }`}>
+                        {entity.status}
+                      </span>
+                    </div>
+                    <h3 className="text-2xl font-serif font-bold mb-3 group-hover:underline decoration-2 underline-offset-4 leading-tight">
+                      {entity.name}
+                    </h3>
+                    <p className="font-sans text-gray-700 text-sm leading-relaxed mb-4 flex-grow line-clamp-4">
+                      {entity.summary || 'Ver expediente completo para más detalles sobre el historial y estado de esta entidad.'}
+                    </p>
+                    <div className="flex items-center text-xs font-bold uppercase tracking-wider mt-auto group-hover:translate-x-1 transition-transform">
+                      Ver Expediente <ChevronRight size={14} className="ml-1" />
+                    </div>
+                  </article>
+                </Link>
+              ))}
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="mt-16 flex justify-center items-center gap-2 border-t border-black pt-8">
+                <button 
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="p-2 border border-black hover:bg-black hover:text-white transition-colors disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-black"
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                
+                <div className="flex items-center gap-1">
+                  {[...Array(totalPages)].map((_, i) => {
+                    const pageNum = i + 1;
+                    // Show current page, first, last, and one on each side
+                    if (
+                      pageNum === 1 || 
+                      pageNum === totalPages || 
+                      (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
+                    ) {
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => handlePageChange(pageNum)}
+                          className={`w-10 h-10 font-mono text-sm font-bold border ${
+                            currentPage === pageNum 
+                              ? 'bg-black text-white border-black' 
+                              : 'border-gray-200 hover:border-black'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    } else if (
+                      pageNum === currentPage - 2 || 
+                      pageNum === currentPage + 2
+                    ) {
+                      return <span key={pageNum} className="px-1 text-gray-400">...</span>;
+                    }
+                    return null;
+                  })}
+                </div>
+
+                <button 
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="p-2 border border-black hover:bg-black hover:text-white transition-colors disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-black"
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+            )}
+          </>
         )}
 
         {!loading && entities.length === 0 && (
