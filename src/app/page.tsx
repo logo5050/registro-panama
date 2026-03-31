@@ -96,6 +96,40 @@ export default function Home() {
         </form>
       </section>
 
+      {/* Reporting Channels Section */}
+      <section className="mb-20 grid grid-cols-1 md:grid-cols-2 gap-8 border-[1.5px] border-black p-8 bg-gray-50">
+        <div className="flex flex-col gap-4">
+          <h2 className="text-xl font-serif font-black uppercase tracking-tight">Canales Seguros de Reporte</h2>
+          <p className="font-serif italic text-gray-600 leading-relaxed">
+            Utilice nuestros canales automatizados para enviar evidencias de manera confidencial y segura.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-6">
+          <a 
+            href="https://wa.me/message/YOUR_WHATSAPP_LINK" 
+            target="_blank" 
+            className="flex-1 border-[1.5px] border-black p-4 bg-white hover:bg-black hover:text-white transition-all group"
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <span className="font-mono text-[10px] font-bold uppercase tracking-widest border border-black px-2 group-hover:border-white">Bot de IA</span>
+            </div>
+            <h3 className="font-serif font-bold text-lg mb-1 uppercase">WhatsApp</h3>
+            <p className="text-[11px] font-mono leading-tight">Envío de audio, fotos y videos de denuncias en tiempo real.</p>
+          </a>
+          <a 
+            href="https://instagram.com/registro.panama" 
+            target="_blank" 
+            className="flex-1 border-[1.5px] border-black p-4 bg-white hover:bg-black hover:text-white transition-all group"
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <span className="font-mono text-[10px] font-bold uppercase tracking-widest border border-black px-2 group-hover:border-white">Mensaje Directo</span>
+            </div>
+            <h3 className="font-serif font-bold text-lg mb-1 uppercase">Instagram</h3>
+            <p className="text-[11px] font-mono leading-tight">Siga las actualizaciones e interactúe con nuestro equipo de IA.</p>
+          </a>
+        </div>
+      </section>
+
       {/* Grid Section - Newspaper Style */}
       <section>
         <h2 className="text-2xl font-serif font-bold uppercase border-b-2 border-black pb-2 mb-8 flex justify-between items-end">

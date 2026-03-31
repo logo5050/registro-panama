@@ -88,7 +88,8 @@ export default function ReportPage() {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-8 bg-white p-8 md:p-12 border-[1.5px] border-black relative">
+      <form onSubmit={handleSubmit} className="space-y-8 bg-white p-8 md:p-12 border-[1.5px] border-black relative mb-20">
+        {/* ... existing form content ... */}
         {/* Secure connection indicator inside form */}
         <div className="absolute top-0 right-0 bg-black text-white text-[10px] uppercase font-mono px-3 py-1 flex items-center gap-1">
           <Lock size={10} /> Encriptación AES-256
@@ -96,6 +97,7 @@ export default function ReportPage() {
 
         <div className="space-y-4">
           <h3 className="font-bold uppercase tracking-widest text-xs border-b border-black pb-2">1. Detalles de la Entidad</h3>
+          {/* ... (rest of form) ... */}
           
           <div>
             <label className="block text-sm font-bold mb-2 uppercase tracking-tighter">Nombre de la Empresa o Entidad *</label>
@@ -185,7 +187,24 @@ export default function ReportPage() {
             {loading ? 'Enviando...' : 'Enviar Reporte Seguro'}
           </button>
         </div>
-      </form>
-    </div>
-  );
-}
+        </form>
+
+        {/* Alternative Channels Section */}
+        <section className="mt-12 border-t-[1.5px] border-gray-200 pt-12 pb-24">
+        <h2 className="text-xl font-serif font-black uppercase tracking-tight mb-6">Otros Canales de Reporte</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div className="border border-gray-200 p-6 bg-gray-50">
+            <h3 className="font-bold uppercase tracking-widest text-xs mb-3">WhatsApp</h3>
+            <p className="text-sm text-gray-600 mb-4 font-serif italic">Envíe un mensaje a nuestro bot para iniciar un reporte conversacional.</p>
+            <a href="https://wa.me/message/YOUR_WHATSAPP_LINK" target="_blank" className="text-xs font-bold uppercase underline underline-offset-4">Abrir Chat</a>
+          </div>
+          <div className="border border-gray-200 p-6 bg-gray-50">
+            <h3 className="font-bold uppercase tracking-widest text-xs mb-3">Instagram</h3>
+            <p className="text-sm text-gray-600 mb-4 font-serif italic">Contáctenos vía DM para enviar evidencias de manera directa.</p>
+            <a href="https://instagram.com/registro.panama" target="_blank" className="text-xs font-bold uppercase underline underline-offset-4">Enviar Mensaje</a>
+          </div>
+        </div>
+        </section>
+        </div>
+        );
+        }
