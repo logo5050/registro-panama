@@ -30,9 +30,9 @@ export default function Home() {
 
   const FILTER_OPTIONS = [
     { label: 'TODAS', value: 'TODAS' },
-    { label: 'RESOLUCIONES', value: 'Resoluciones' },
-    { label: 'INFRACCIONES', value: 'Infracciones' },
-    { label: 'REPORTES CIUDADANOS', value: 'Reportes Ciudadanos' }
+    { label: 'NOTICIAS', value: 'Noticias' },
+    { label: 'ACODECO', value: 'Acodeco' },
+    { label: 'COMUNIDAD', value: 'Comunidad' }
   ];
 
   useEffect(() => {

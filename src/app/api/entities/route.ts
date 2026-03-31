@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
  * 
  * Fetch all entities (businesses) with optional content-based filters and pagination.
  * ?search=query
- * ?status=Resoluciones | Infracciones | Reportes Ciudadanos | TODAS
+ * ?status=Noticias | Acodeco | Comunidad | TODAS
  * ?page=1
  * ?limit=9
  */
@@ -26,26 +26,32 @@ export async function GET(req: NextRequest) {
   try {
     let queryBuilder;
 
-    if (statusFilter === 'Resoluciones') {
+    if (statusFilter === 'Noticias') {
+      // Filter by news mentions (El Económico, etc.)
       queryBuilder = supabasePublic
         .from('businesses')
         .select(`${baseFields}, events!inner(event_type)`, { count: 'exact' })
-        .in('events.event_type', ['court_ruling', 'RESOLUCIÓN JUDICIAL']);
-    } else if (statusFilter === 'Infracciones') {
+        .eq('events.event_type', 'news_mention');
+    } else if (statusFilter === 'Acodeco') {
+      // Filter by ACODECO infractions or sanctions
       queryBuilder = supabasePublic
         .from('businesses')
         .select(`${baseFields}, events!inner(event_type)`, { count: 'exact' })
-        .in('events.event_type', ['acodeco_infraction', 'INFRACCIÓN ACODECO']);
-    } else if (statusFilter === 'Reportes Ciudadanos') {
+        .in('events.event_type', ['acodeco_infraction', 'sanction', 'RESOLUCIÓN JUDICIAL', 'INFRACCIÓN ACODECO']);
+    } else if (statusFilter === 'Comunidad') {
+      // Filter by community reports from WhatsApp/Instagram
       queryBuilder = supabasePublic
         .from('businesses')
-        .select(`${baseFields}, multimedia_reports!inner(id)`, { count: 'exact' });
+        .select(`${baseFields}, multimedia_reports!inner(id)`, { count: 'exact' })
+        .in('multimedia_reports.source', ['WhatsApp', 'Instagram']);
     } else {
+      // Basic query for "Todas"
       queryBuilder = supabasePublic
         .from('businesses')
         .select(baseFields, { count: 'exact' });
         
       if (statusFilter && statusFilter !== 'TODAS') {
+        // Fallback for any other specific status strings
         queryBuilder = queryBuilder.eq('status', statusFilter);
       }
     }
@@ -74,10 +80,11 @@ export async function GET(req: NextRequest) {
       date: entity.updated_at ? new Date(entity.updated_at).toISOString().split('T')[0] : null
     }));
 
-    // For inner joins, Supabase count might be slightly off due to join duplication before distinct.
-    // However, for distinct businesses, we'll return the count as is for now.
+    // Post-process to ensure uniqueness (sometimes joins duplicate parent rows)
+    const uniqueEntities = Array.from(new Map(formattedEntities.map(item => [item.id, item])).values());
+
     return NextResponse.json({
-      data: formattedEntities,
+      data: uniqueEntities,
       total: count || 0,
       page,
       limit,
