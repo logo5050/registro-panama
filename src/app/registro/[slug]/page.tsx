@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { supabasePublic } from '@/lib/supabase';
 
 type TimelineEvent = {
   id: string;
@@ -32,16 +33,44 @@ type Entity = {
   timeline: TimelineEvent[];
 };
 
+// Directly fetch data from Supabase in the Server Component
 async function getEntity(slug: string): Promise<Entity | null> {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-  try {
-    const res = await fetch(`${baseUrl}/api/entities/${slug}`, { cache: 'no-store' });
-    if (!res.ok) return null;
-    return res.json();
-  } catch (error) {
-    console.error('Error fetching entity:', error);
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(slug);
+
+  let query = supabasePublic
+    .from('businesses')
+    .select('*, events(*)')
+    .order('event_date', { foreignTable: 'events', ascending: false });
+
+  if (isUuid) {
+    query = query.eq('id', slug);
+  } else {
+    query = query.eq('slug', slug);
+  }
+
+  const { data: entity, error } = await query.single();
+
+  if (error || !entity) {
+    console.error('Database fetch error or entity not found:', error);
     return null;
   }
+
+  // Format the response to match the requested TimelineEvent structure
+  const formattedEvents = (entity.events || []).map((event: any) => ({
+    id: event.id,
+    type: event.event_type.replace(/_/g, ' ').toUpperCase(),
+    date: event.event_date,
+    title: event.summary_es,
+    source: event.source_url,
+    description: event.summary_es,
+    link: event.source_url,
+    verified: true
+  }));
+
+  return {
+    ...entity,
+    timeline: formattedEvents
+  } as Entity;
 }
 
 const CategoryTag = ({ type }: { type: string }) => {
@@ -54,7 +83,7 @@ const CategoryTag = ({ type }: { type: string }) => {
   const currentStyle = styles[type] || styles['default'];
   return (
     <span className={`text-[10px] font-mono tracking-widest uppercase px-2 py-1 border font-bold ${currentStyle}`}>
-      {type.replace(/_/g, ' ')}
+      {type}
     </span>
   );
 };
@@ -129,7 +158,7 @@ export default async function DetailPage({ params }: { params: Promise<{ slug: s
                   <span className="text-gray-400 font-bold">Fuente:</span>
                   <span className="font-bold truncate max-w-[200px]">{item.source}</span>
                   {item.link && (
-                    <a href={item.link} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 hover:underline text-black font-bold">
+                    <a href={item.link} target="_blank" rel="noopener noreferrer" className="ml-auto flex items-center gap-1 hover:underline text-black font-bold whitespace-nowrap">
                       Ver original <ExternalLink size={12} />
                     </a>
                   )}

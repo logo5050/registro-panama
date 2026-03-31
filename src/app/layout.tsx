@@ -29,7 +29,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html lang="es" style={{ colorScheme: 'light' }} className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-screen bg-white text-black font-sans selection:bg-black selection:text-white flex flex-col">
         {/* Top Bar - Security Indicator */}
         <div className="bg-gray-100 border-b border-gray-200 text-[10px] md:text-xs py-1.5 px-4 flex justify-center items-center gap-2 font-mono text-gray-600">
