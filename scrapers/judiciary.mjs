@@ -16,6 +16,11 @@
 
 import * as cheerio from 'cheerio';
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
+import { extractBusinessName, requireAnthropicKey } from './lib/extract-entity.mjs';
+
+const BACKFILL = process.argv.includes('--backfill');
+const MAX_BACKFILL_PAGES = parseInt(process.env.BACKFILL_MAX_PAGES || '30', 10);
+const MAX_ARTICLES = BACKFILL ? 200 : 15;
 
 const OJ_BASE = 'https://www.organojudicial.gob.pa';
 const OJ_NEWS = `${OJ_BASE}/noticias`;
@@ -140,6 +145,18 @@ async function parseArticle(article) {
     }
   }
 
+  // AI fallback: use Claude to extract entity if regex failed
+  if (!businessName && useAI) {
+    try {
+      businessName = await extractBusinessName(
+        `${article.title} ${bodyText.substring(0, 1000)}`,
+        'judiciary'
+      );
+    } catch {
+      businessName = null;
+    }
+  }
+
   if (!businessName) return null;
 
   return {
@@ -157,19 +174,108 @@ async function parseArticle(article) {
   };
 }
 
+// Track if AI is available
+let useAI = false;
+
+/**
+ * Scrape paginated judiciary news for backfill mode.
+ */
+async function scrapeJudiciaryBackfill() {
+  const allArticles = [];
+  let consecutiveEmpty = 0;
+
+  for (let page = 1; page <= MAX_BACKFILL_PAGES; page++) {
+    const url = page === 1 ? OJ_NEWS : `${OJ_NEWS}/page/${page}/`;
+    console.log(`  📄 ${url}`);
+
+    const html = await fetchPage(url);
+    if (!html) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty >= 2) break;
+      continue;
+    }
+
+    const $ = cheerio.load(html);
+    const pageArticles = [];
+
+    const selectors = [
+      'article', '.views-row', '.node', '.post',
+      'div[class*="noticia"]', 'div[class*="news"]',
+      '.field-content', 'li[class*="item"]'
+    ];
+
+    let $items = $([]);
+    for (const sel of selectors) {
+      $items = $(sel);
+      if ($items.length > 0) break;
+    }
+
+    if ($items.length > 0) {
+      $items.each((_, el) => {
+        const title = $(el).find('h2, h3, h4, .title, a').first().text().trim();
+        const link = $(el).find('a').first().attr('href') || '';
+        const text = $(el).text().toLowerCase();
+        // In backfill, be more permissive — grab anything that might be business-related
+        const isRelevant = BACKFILL
+          ? COURT_KEYWORDS.some(k => text.includes(k)) || text.includes('empresa') || text.includes('s.a.')
+          : COURT_KEYWORDS.some(k => text.includes(k));
+
+        if (title && isRelevant) {
+          pageArticles.push({
+            title,
+            url: link.startsWith('http') ? link : `${OJ_BASE}${link}`,
+          });
+        }
+      });
+    }
+
+    if (pageArticles.length === 0) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty >= 2) {
+        console.log(`    ⏭️  2 consecutive empty pages — stopping`);
+        break;
+      }
+    } else {
+      consecutiveEmpty = 0;
+      allArticles.push(...pageArticles);
+      console.log(`    Found ${pageArticles.length} articles`);
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  return allArticles;
+}
+
 // ——— Main ———
 async function main() {
-  console.log('⚖️  Judiciary Scraper — Registro Panamá');
+  console.log(`⚖️  Judiciary Scraper — Registro Panamá${BACKFILL ? ' (BACKFILL MODE)' : ''}`);
   console.log('========================================\n');
 
-  const articles = await scrapeJudiciaryNews();
+  useAI = !!process.env.ANTHROPIC_API_KEY;
+  if (useAI) {
+    console.log('🤖 AI entity extraction enabled\n');
+  }
+
+  const articles = BACKFILL ? await scrapeJudiciaryBackfill() : await scrapeJudiciaryNews();
+
+  // Deduplicate by URL
+  const seen = new Set();
+  const unique = articles.filter(a => {
+    if (seen.has(a.url)) return false;
+    seen.add(a.url);
+    return true;
+  });
+
+  console.log(`\n📊 Total unique articles: ${unique.length}`);
+
   const events = [];
 
-  for (const article of articles.slice(0, 15)) {
+  for (const article of unique.slice(0, MAX_ARTICLES)) {
     console.log(`  📄 Parsing: ${article.title.substring(0, 60)}...`);
     const event = await parseArticle(article);
     if (event) events.push(event);
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, BACKFILL ? 2000 : 1500));
   }
 
   if (events.length === 0) {

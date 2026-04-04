@@ -1,4 +1,6 @@
-import { supabasePublic } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase';
+import { getVerifiedLawyer } from '@/lib/auth';
+import { redirect } from 'next/navigation';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 
@@ -9,9 +11,35 @@ type Props = {
 };
 
 export default async function LeadEvidenceVault({ params }: Props) {
+  // ─── Auth Guard: verified lawyers only ───
+  const lawyer = await getVerifiedLawyer();
+  if (!lawyer) {
+    redirect('/?error=unauthorized');
+  }
+
   const { id } = await params;
 
-  const { data: lead, error } = await supabasePublic
+  // Validate UUID format to prevent injection
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(id)) {
+    notFound();
+  }
+
+  // Check if lawyer has purchased this lead
+  const { data: purchase } = await supabaseAdmin
+    .from('report_purchases')
+    .select('id')
+    .eq('user_id', lawyer.userId)
+    .eq('report_id', id)
+    .single();
+
+  if (!purchase) {
+    // Redirect to portal with a message that they need to purchase first
+    redirect('/lawyer-portal?error=purchase_required');
+  }
+
+  // Only now fetch the full lead data (with private info)
+  const { data: lead, error } = await supabaseAdmin
     .from('multimedia_reports')
     .select('*, businesses(*)')
     .eq('id', id)
@@ -38,7 +66,7 @@ export default async function LeadEvidenceVault({ params }: Props) {
 
       <main className="max-w-6xl mx-auto p-6 md:p-12">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
-          
+
           {/* Main Evidence Content */}
           <div className="lg:col-span-2 space-y-12">
             <section>
@@ -57,7 +85,7 @@ export default async function LeadEvidenceVault({ params }: Props) {
                       lead.evidence_urls.map((url: string, idx: number) => (
                         <div key={idx} className="aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-dashed border-slate-200 dark:border-slate-700">
                           <span className="text-2xl">📄</span>
-                          <p className="absolute mt-12 text-[10px] font-bold text-slate-400">evidence_{idx+1}.jpg</p>
+                          <p className="absolute mt-12 text-[10px] font-bold text-slate-400">evidence_{idx + 1}.jpg</p>
                         </div>
                       ))
                     ) : (
@@ -115,15 +143,15 @@ export default async function LeadEvidenceVault({ params }: Props) {
                 <p className="text-2xl font-black text-slate-900 dark:text-white mb-1">{lead.businesses?.name}</p>
                 <Link href={`/registro/${lead.businesses?.slug}`} className="text-xs text-blue-600 hover:underline">View Public Profile →</Link>
               </div>
-              
+
               <dl className="space-y-4 text-sm">
                 <div>
                   <dt className="text-[10px] font-bold text-slate-400 uppercase">RUC / DV</dt>
                   <dd className="text-slate-900 dark:text-white font-mono">{lead.businesses?.ruc || 'N/A'}-{lead.businesses?.dv || '0'}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold text-slate-400 uppercase">Resolved Social Handle</dt>
-                  <dd className="text-blue-600 font-bold">{lead.social_handle || '@anonymous'}</dd>
+                  <dt className="text-[10px] font-bold text-slate-400 uppercase">Complainant Contact</dt>
+                  <dd className="text-blue-600 font-bold">{lead.social_handle || 'Anonymous'}</dd>
                 </div>
                 <div>
                   <dt className="text-[10px] font-bold text-slate-400 uppercase">Submission Date</dt>

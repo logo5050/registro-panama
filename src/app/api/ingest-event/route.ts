@@ -11,6 +11,10 @@ const VALID_EVENT_TYPES = [
   'license_revoked',
   'ownership_change',
   'sanction',
+  // New data sources (2026)
+  'asep_resolution',       // ASEP telecom/electricity/water rulings
+  'sbp_sanction',          // Superintendencia de Bancos sanctions
+  'acodeco_open_data',     // ACODECO datasets from datosabiertos.gob.pa
 ] as const;
 
 type EventType = typeof VALID_EVENT_TYPES[number];
@@ -28,10 +32,16 @@ function generateSlug(name: string): string {
 
 export async function POST(req: Request) {
   // --- Auth ---
-  const authToken = req.headers.get('Authorization');
+  const authHeader = req.headers.get('Authorization');
   const secret = process.env.INGEST_SECRET;
 
-  if (!secret || authToken !== `Bearer ${secret}`) {
+  // Fail-closed: reject if secret is missing, too short, or doesn't match
+  if (!secret || secret.length < 16) {
+    console.error('INGEST_SECRET is not configured or too short (min 16 chars)');
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

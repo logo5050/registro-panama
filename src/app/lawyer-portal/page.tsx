@@ -1,13 +1,21 @@
-import { supabasePublic } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase';
+import { getVerifiedLawyer } from '@/lib/auth';
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
 export default async function LawyerPortal() {
+  // ─── Auth Guard: verified lawyers only ───
+  const lawyer = await getVerifiedLawyer();
+  if (!lawyer) {
+    redirect('/?error=unauthorized');
+  }
+
   // Fetch high-value leads for the B2B dashboard
-  const { data: leads, error } = await supabasePublic
+  const { data: leads, error } = await supabaseAdmin
     .from('multimedia_reports')
-    .select('*, businesses(name, slug)')
+    .select('id, entity_name_manual, public_summary, lead_score, status, created_at, businesses(name, slug)')
     .order('lead_score', { ascending: false })
     .limit(20);
 
@@ -27,7 +35,7 @@ export default async function LawyerPortal() {
               Lawyer Portal
             </span>
             <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xs">
-              JD
+              {lawyer.fullName.split(' ').map(n => n[0]).join('').slice(0, 2)}
             </div>
           </div>
         </div>
@@ -59,11 +67,11 @@ export default async function LawyerPortal() {
                   <div className="flex justify-between items-start mb-4">
                     <div>
                       <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1 group-hover:text-blue-600 transition-colors">
-                        {lead.businesses?.name || 'Unknown Business'}
+                        {lead.businesses?.name || lead.entity_name_manual || 'Unknown Business'}
                       </h3>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-800 px-2 py-0.5 rounded">
-                          {lead.social_handle || 'Anonymous'}
+                          Complainant Protected
                         </span>
                         <span className="text-[10px] text-slate-400 font-mono">
                           ID: {lead.id.substring(0, 8)}
@@ -73,8 +81,8 @@ export default async function LawyerPortal() {
                     <div className="text-right">
                       <div className="flex items-center gap-1.5 justify-end mb-1">
                         <div className="h-2 w-16 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-blue-600 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.4)]" 
+                          <div
+                            className="h-full bg-blue-600 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.4)]"
                             style={{ width: `${(lead.lead_score || 0) * 100}%` }}
                           />
                         </div>
@@ -103,8 +111,8 @@ export default async function LawyerPortal() {
                         </p>
                       </div>
                     </div>
-                    
-                    <Link 
+
+                    <Link
                       href={`/lawyer-portal/leads/${lead.id}`}
                       className="px-6 py-2 bg-slate-900 dark:bg-blue-600 text-white text-xs font-black uppercase tracking-widest rounded-lg hover:bg-blue-500 transition-colors shadow-lg shadow-blue-500/10"
                     >
@@ -124,16 +132,16 @@ export default async function LawyerPortal() {
           <aside className="space-y-6">
             <div className="p-6 bg-blue-600 rounded-3xl text-white shadow-xl shadow-blue-500/20">
               <h3 className="text-lg font-black mb-1 italic">Verified Partner</h3>
-              <p className="text-blue-100 text-xs mb-6 opacity-80">Juan De Dios, Esq.</p>
-              
+              <p className="text-blue-100 text-xs mb-6 opacity-80">{lawyer.fullName}</p>
+
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm">
                   <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">Leads Bought</p>
-                  <p className="text-2xl font-black italic">14</p>
+                  <p className="text-2xl font-black italic">—</p>
                 </div>
                 <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm">
                   <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">Success Rate</p>
-                  <p className="text-2xl font-black italic">82%</p>
+                  <p className="text-2xl font-black italic">—</p>
                 </div>
               </div>
 

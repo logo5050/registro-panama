@@ -13,7 +13,8 @@ import { supabasePublic } from '@/lib/supabase';
 
 type TimelineEvent = {
   id: string;
-  type: string;
+  rawType: string;       // original event_type from DB (for filtering)
+  type: string;          // display-formatted label
   date: string;
   title: string;
   source: string;
@@ -56,16 +57,31 @@ async function getEntity(slug: string): Promise<Entity | null> {
     return null;
   }
 
-  // Format the response to match the requested TimelineEvent structure
+  // Map raw event_type → display label
+  const TYPE_LABELS: Record<string, string> = {
+    'acodeco_infraction': 'INFRACCIÓN ACODECO',
+    'INFRACCIÓN ACODECO': 'INFRACCIÓN ACODECO',
+    'court_ruling': 'RESOLUCIÓN JUDICIAL',
+    'RESOLUCIÓN JUDICIAL': 'RESOLUCIÓN JUDICIAL',
+    'news_mention': 'MENCIÓN PRENSA',
+    'sanction': 'SANCIÓN',
+    'REPORTE CIUDADANO': 'REPORTE CIUDADANO',
+    'geo_audit_passed': 'AUDITORÍA GEO',
+    'license_granted': 'LICENCIA OTORGADA',
+    'license_revoked': 'LICENCIA REVOCADA',
+    'ownership_change': 'CAMBIO DE PROPIEDAD',
+  };
+
   const formattedEvents = (entity.events || []).map((event: any) => ({
     id: event.id,
-    type: event.event_type.replace(/_/g, ' ').toUpperCase(),
+    rawType: event.event_type,  // keep original for filtering
+    type: TYPE_LABELS[event.event_type] || event.event_type.replace(/_/g, ' ').toUpperCase(),
     date: event.event_date,
     title: event.summary_es,
-    source: event.source_url,
+    source: event.source_url || '',
     description: event.summary_es,
-    link: event.source_url,
-    verified: true
+    link: event.source_url || null,
+    verified: true,
   }));
 
   return {
@@ -98,19 +114,19 @@ export default async function DetailPage({ params }: { params: Promise<{ slug: s
   }
 
   const timeline = entity.timeline || [];
-  const officialEvents = timeline.filter(e => 
-    e.type === 'INFRACCIÓN ACODECO' || 
-    e.type === 'RESOLUCIÓN JUDICIAL' || 
-    e.type === 'SANCION' ||
-    e.type === 'ACODECO INFRACTION'
-  );
-  const newsEvents = timeline.filter(e => 
-    e.type === 'NEWS MENTION' || 
-    e.type === 'MENCION PRENSA'
-  );
-  const otherEvents = timeline.filter(e => 
-    !officialEvents.includes(e) && !newsEvents.includes(e)
-  );
+
+  const OFFICIAL_TYPES = new Set([
+    'acodeco_infraction', 'INFRACCIÓN ACODECO',
+    'court_ruling', 'RESOLUCIÓN JUDICIAL',
+    'sanction',
+  ]);
+  const NEWS_TYPES = new Set([
+    'news_mention',
+  ]);
+
+  const officialEvents = timeline.filter(e => OFFICIAL_TYPES.has(e.rawType));
+  const newsEvents = timeline.filter(e => NEWS_TYPES.has(e.rawType));
+  const otherEvents = timeline.filter(e => !OFFICIAL_TYPES.has(e.rawType) && !NEWS_TYPES.has(e.rawType));
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 animate-in slide-in-from-bottom-4 duration-500">
@@ -201,7 +217,7 @@ export default async function DetailPage({ params }: { params: Promise<{ slug: s
                   </div>
                   <h3 className="text-lg font-serif font-bold mb-2 leading-tight text-gray-800">{item.title}</h3>
                   <div className="flex items-center gap-3 text-[10px] font-mono uppercase tracking-tighter text-gray-400">
-                    <span className="truncate max-w-[150px]">{new URL(item.source).hostname}</span>
+                    <span className="truncate max-w-[150px]">{(() => { try { return new URL(item.source).hostname; } catch { return item.source || 'Fuente'; } })()}</span>
                     {item.link && (
                       <a href={item.link} target="_blank" rel="noopener noreferrer" className="hover:text-black flex items-center gap-1">
                         Leer Artículo <ExternalLink size={10} />

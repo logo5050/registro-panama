@@ -14,6 +14,10 @@ import * as cheerio from 'cheerio';
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
 import { extractBusinessFromNews, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
 
+const BACKFILL = process.argv.includes('--backfill');
+const MAX_BACKFILL_PAGES = parseInt(process.env.BACKFILL_MAX_PAGES || '20', 10);
+const MAX_ARTICLES = BACKFILL ? 200 : 30;
+
 const SOURCES = [
   {
     name: 'La Estrella',
@@ -104,6 +108,79 @@ async function scrapeSource(source) {
 }
 
 /**
+ * Scrape paginated archive pages for a single source (backfill mode).
+ * WordPress sites use /page/N/, La Estrella may use different pagination.
+ */
+async function scrapeSourceBackfill(source) {
+  console.log(`\n📰 BACKFILL: Scraping ${source.name} archive...`);
+  const allArticles = [];
+  let consecutiveEmpty = 0;
+  const origin = new URL(source.url).origin;
+
+  for (let page = 1; page <= MAX_BACKFILL_PAGES; page++) {
+    const url = page === 1 ? source.url : `${source.url}page/${page}/`;
+    console.log(`  📄 ${url}`);
+
+    const html = await fetchPage(url);
+    if (!html) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty >= 2) {
+        console.log(`    ⏭️  2 consecutive failures — done with ${source.name}`);
+        break;
+      }
+      continue;
+    }
+
+    const $ = cheerio.load(html);
+    const pageArticles = [];
+
+    $(source.selectors.articles).each((_, el) => {
+      const title = $(el).find(source.selectors.title).first().text().trim();
+      const href = $(el).find(source.selectors.link).first().attr('href') || '';
+      const text = $(el).text().toLowerCase();
+
+      // In backfill mode, be more permissive — any article from business sections is relevant
+      const isRelevant = BUSINESS_KEYWORDS.some(k => text.includes(k));
+      if (!title || (!isRelevant && !BACKFILL)) return;
+      // In backfill, still require SOME business signal
+      if (BACKFILL && !isRelevant && !text.includes('s.a.') && !text.includes('panam')) return;
+
+      const fullUrl = href.startsWith('http') ? href : `${origin}${href}`;
+      pageArticles.push({ title, url: fullUrl, source: source.name });
+    });
+
+    // Fallback: link scanning
+    if (pageArticles.length === 0) {
+      $('a').each((_, el) => {
+        const text = $(el).text().trim();
+        const href = $(el).attr('href') || '';
+        if (text.length > 20 && BUSINESS_KEYWORDS.some(k => text.toLowerCase().includes(k))) {
+          const fullUrl = href.startsWith('http') ? href : `${origin}${href}`;
+          pageArticles.push({ title: text, url: fullUrl, source: source.name });
+        }
+      });
+    }
+
+    if (pageArticles.length === 0) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty >= 2) {
+        console.log(`    ⏭️  2 consecutive empty pages — done with ${source.name}`);
+        break;
+      }
+    } else {
+      consecutiveEmpty = 0;
+      allArticles.push(...pageArticles);
+      console.log(`    Found ${pageArticles.length} articles`);
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  console.log(`  📊 Total from ${source.name}: ${allArticles.length} articles`);
+  return allArticles;
+}
+
+/**
  * Convert an article to a Registro Panama event using Claude for entity extraction.
  */
 async function articleToEvent(article) {
@@ -128,15 +205,17 @@ async function articleToEvent(article) {
 // ——— Main ———
 async function main() {
   requireAnthropicKey();
-  console.log('📰 Panama Business News Scraper');
+  console.log(`📰 Panama Business News Scraper${BACKFILL ? ' (BACKFILL MODE)' : ''}`);
   console.log('================================\n');
 
   const allArticles = [];
 
   for (const source of SOURCES) {
-    const articles = await scrapeSource(source);
+    const articles = BACKFILL
+      ? await scrapeSourceBackfill(source)
+      : await scrapeSource(source);
     allArticles.push(...articles);
-    await new Promise(r => setTimeout(r, 2000)); // Polite delay between sources
+    await new Promise(r => setTimeout(r, 2000));
   }
 
   // Deduplicate by URL
@@ -149,9 +228,20 @@ async function main() {
 
   console.log(`\n📊 Total unique articles: ${unique.length}`);
 
-  // articleToEvent is now async (uses Claude)
-  const eventResults = await Promise.all(unique.slice(0, 30).map(articleToEvent));
-  const events = eventResults.filter(Boolean);
+  // Process articles sequentially in backfill (rate limit friendly), parallel in normal mode
+  const toProcess = unique.slice(0, MAX_ARTICLES);
+  let events;
+
+  if (BACKFILL) {
+    events = [];
+    for (const article of toProcess) {
+      const event = await articleToEvent(article);
+      if (event) events.push(event);
+    }
+  } else {
+    const eventResults = await Promise.all(toProcess.map(articleToEvent));
+    events = eventResults.filter(Boolean);
+  }
 
   logExtractionStats();
 

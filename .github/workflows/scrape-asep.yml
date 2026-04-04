@@ -1,0 +1,33 @@
+name: Scrape ASEP
+
+on:
+  schedule:
+    # Every Tuesday at 8am UTC (3am Panama time)
+    - cron: '0 8 * * 2'
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install scraper dependencies
+        working-directory: ./scrapers
+        run: npm install
+
+      - name: Run ASEP scraper
+        working-directory: ./scrapers
+        env:
+          INGEST_API_URL: ${{ secrets.INGEST_API_URL }}
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node asep.mjs

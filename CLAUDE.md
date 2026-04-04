@@ -24,6 +24,23 @@ cd scrapers && npm install
 node acodeco.mjs     # Scrape ACODECO infractions
 node news.mjs        # Scrape Panama business news
 node judiciary.mjs   # Scrape judiciary rulings
+node asep.mjs        # Scrape ASEP utility resolutions (telecom, electricity, water)
+node sbp.mjs         # Scrape SBP banking sanctions
+node datos-abiertos.mjs  # Scrape ACODECO open data (CSV datasets)
+
+# Backfill: pull historical data (requires ANTHROPIC_API_KEY)
+node backfill.mjs                    # Run all scrapers in backfill mode
+node backfill.mjs --only asep,sbp    # Run specific scrapers only
+node backfill.mjs --dry-run          # Parse without ingesting
+node backfill.mjs --max-pages 10     # Limit pagination depth
+
+# Individual scraper backfill (alternative to runner)
+node acodeco.mjs --backfill          # Deep crawl ACODECO sections
+node asep.mjs --backfill             # Paginate all ASEP categories
+node sbp.mjs --backfill              # All years since 2010
+node datos-abiertos.mjs --backfill   # All datasets, no event cap
+node judiciary.mjs --backfill        # Deep crawl judiciary archive
+node news.mjs --backfill             # Archive crawl news outlets
 ```
 
 ## Architecture
@@ -42,6 +59,9 @@ GitHub Actions (cron) → Scraper scripts (cheerio)
 - ACODECO: Every Monday 8am UTC
 - News: Wednesday + Saturday 9am UTC
 - Judiciary: Every Friday 8am UTC
+- ASEP: Every Tuesday 8am UTC (utility resolutions — telecom, electricity, water)
+- SBP: 1st of each month 8am UTC (banking sanctions)
+- Datos Abiertos: 15th of each month 8am UTC (ACODECO CSV datasets from datosabiertos.gob.pa)
 - All can be triggered manually via GitHub UI (workflow_dispatch)
 
 ### Key Files
@@ -53,13 +73,37 @@ GitHub Actions (cron) → Scraper scripts (cheerio)
 - `src/app/page.tsx` — Homepage (server component)
 - `src/app/registro/[slug]/page.tsx` — Business detail page (server component)
 - `scrapers/` — Node.js scraper scripts + shared ingestion library
+- `scrapers/backfill.mjs` — Orchestrator for historical data backfill (runs all scrapers with --backfill)
+- `scrapers/lib/extract-entity.mjs` — AI entity extraction (Claude Haiku + Vision for PDFs)
 - `supabase/schema.sql` — Full schema definition
 - `supabase/migrations/` — Incremental migration files
 
 ### Database Schema
 - **businesses** — Enriched with RUC, province, district, industry, founded_year, etc.
-- **events** — With duplicate prevention (unique on business_id + event_type + source_url)
-- **scrape_logs** — Tracks automation runs for monitoring
+- **events** — With duplicate prevention (unique on business_id + event_type + source_url). Has `sector` column for cross-source categorization.
+- **scrape_logs** — Tracks automation runs for monitoring. Includes `scraper_version` field.
+
+### Event Types
+- `acodeco_infraction` — ACODECO sanctions and infractions (HTML scrape)
+- `court_ruling` — Judiciary rulings involving businesses
+- `news_mention` — Business mentions in Panamanian news
+- `license_granted` / `license_revoked` — Business license changes
+- `ownership_change` — Changes in business ownership
+- `sanction` — General sanctions
+- `geo_audit_passed` — GEO Glass audit completion
+- `asep_resolution` — ASEP utility resolutions (telecom, electricity, water)
+- `sbp_sanction` — Superintendencia de Bancos banking sanctions
+- `acodeco_open_data` — ACODECO datasets from Panama's Open Data Portal (CKAN API)
+
+### Data Sources
+| Source | URL | Type | Frequency |
+|--------|-----|------|-----------|
+| ACODECO (HTML) | supermarket.gob.pa | HTML scrape (cheerio) | Weekly |
+| Judiciary | organojudicial.gob.pa | HTML scrape (cheerio) | Weekly |
+| News | Various Panamanian outlets | HTML scrape (cheerio) | 2x/week |
+| ASEP | asep.gob.pa/category/resoluciones/ | HTML scrape (cheerio) | Weekly |
+| SBP | superbancos.gob.pa/sanciones | HTML table scrape (cheerio) | Monthly |
+| Datos Abiertos | datosabiertos.gob.pa (CKAN API) | CSV download + parse | Monthly |
 
 ## Critical Rules
 - **Server components by default.** 'use client' only when needed.
@@ -90,6 +134,7 @@ NEXT_PUBLIC_SITE_URL=https://registro-panama.vercel.app
 ```
 INGEST_API_URL=https://registro-panama.vercel.app/api/ingest-event
 INGEST_SECRET=<same as .env.local>
+ANTHROPIC_API_KEY=<optional, enables AI entity extraction in ASEP scraper>
 ```
 
 ## Common Pitfalls

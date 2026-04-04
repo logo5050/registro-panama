@@ -203,6 +203,97 @@ Rules:
 }
 
 /**
+ * Generic entity extraction — for ASEP, judiciary, and other sources.
+ * Flexible prompt that handles any Panamanian government document.
+ *
+ * @param {string} text - Any text (title + excerpt, resolution text, etc.)
+ * @param {string} source - Source hint ('asep', 'judiciary', 'sbp', etc.)
+ * @returns {Promise<string|null>} Business name or null
+ */
+export async function extractBusinessName(text, source = 'generic') {
+  const sourceHints = {
+    asep: 'ASEP (Autoridad Nacional de los Servicios Públicos) utility resolution. Look for telecom, electricity, or water companies.',
+    judiciary: 'Panamanian court ruling. Look for the defendant company (demandado) or primary business entity.',
+    sbp: 'Superintendencia de Bancos banking sanction. Look for the sanctioned bank or financial institution.',
+    generic: 'Panamanian government document about a business.',
+  };
+
+  const systemPrompt = `You extract the primary business or company name from Panamanian government documents.
+Context: ${sourceHints[source] || sourceHints.generic}
+
+Rules:
+- Return ONLY the company/organization name. Examples: "Cable & Wireless", "ENSA", "Banco General", "Copa Airlines", "Supermercado Rey S.A."
+- If multiple companies are mentioned, return the one being sanctioned, investigated, or primarily referenced
+- Do NOT include legal references, resolution numbers, dates, or context — just the name
+- Return "NONE" if no specific business entity can be identified
+- Return "NONE" for government agencies, country names, or generic terms`;
+
+  const userMessage = text.substring(0, 2000);
+  return callClaude(systemPrompt, userMessage, `${source}:${text.substring(0, 100)}`);
+}
+
+/**
+ * Extract multiple business entities from a longer document.
+ * Returns an array of names. Used for backfill where one page may contain many entities.
+ *
+ * @param {string} text - Document text
+ * @param {string} source - Source hint
+ * @returns {Promise<string[]>} Array of business names
+ */
+export async function extractMultipleBusinesses(text, source = 'generic') {
+  const sourceHints = {
+    asep: 'ASEP utility resolutions',
+    judiciary: 'Panamanian court rulings',
+    sbp: 'Banking sanctions',
+    generic: 'Panamanian government documents',
+  };
+
+  const cacheKey = `multi:${source}:${text.substring(0, 100)}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+  // Rate limiting
+  const now = Date.now();
+  const elapsed = now - lastCallTime;
+  if (elapsed < RATE_LIMIT_MS) {
+    await new Promise(r => setTimeout(r, RATE_LIMIT_MS - elapsed));
+  }
+  lastCallTime = Date.now();
+
+  try {
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 300,
+      system: `You extract ALL business/company names from ${sourceHints[source] || 'Panamanian government documents'}.
+
+Rules:
+- Return one company name per line, nothing else
+- Examples: "Cable & Wireless", "ENSA", "Banco General"
+- Only include actual business entities, not government agencies
+- Return "NONE" if no businesses are found`,
+      messages: [{ role: 'user', content: text.substring(0, 4000) }],
+    });
+
+    const result = msg.content[0]?.text?.trim() || 'NONE';
+    if (result.startsWith('NONE')) {
+      cache.set(cacheKey, []);
+      return [];
+    }
+
+    const names = result
+      .split('\n')
+      .map(l => l.replace(/^[-•*\d.)\s]+/, '').trim())
+      .filter(l => l.length >= 2 && l.length <= 120 && !l.startsWith('NONE'));
+
+    cache.set(cacheKey, names);
+    return names;
+  } catch (err) {
+    console.warn(`  ⚠️  Multi-extraction failed (${err.message})`);
+    cache.set(cacheKey, []);
+    return [];
+  }
+}
+
+/**
  * Check if ANTHROPIC_API_KEY is available.
  * Call this at the start of each scraper to fail fast.
  */
