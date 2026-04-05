@@ -23,7 +23,7 @@
  * Runs monthly via GitHub Actions (15th of each month, 8am UTC).
  */
 
-import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
+import { batchIngest, logScrapeResult, normalizeDate } from './lib/ingest.mjs';
 import { extractBusinessName } from './lib/extract-entity.mjs';
 
 const BACKFILL = process.argv.includes('--backfill');
@@ -65,9 +65,37 @@ async function fetchCsv(url) {
       },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    // Use arrayBuffer + TextDecoder to handle UTF-8 correctly on Windows
+
+    const contentType = res.headers.get('content-type') || '';
+    let encoding = 'utf-8';
+    if (contentType.toLowerCase().includes('charset=')) {
+      encoding = contentType.split('charset=')[1].split(';')[0].trim().toLowerCase();
+    }
+
     const buf = await res.arrayBuffer();
-    const text = new TextDecoder('utf-8').decode(buf);
+    let text = new TextDecoder(encoding).decode(buf);
+
+    // If we see many replacement characters (\ufffd), or common CP850/Latin1 patterns
+    // like "¢" (ó) or "¡" (í), it's likely mis-encoded.
+    const hasReplacement = text.includes('\ufffd');
+    const hasCP850Signs = /[\u00A2\u00A1\u00A4\u00BA\u00AA]/.test(text); // ¢, ¡, ¤, º, ª
+
+    if ((hasReplacement || hasCP850Signs) && encoding === 'utf-8') {
+      // Heuristic: try CP850 first for Panama DOS-style legacy data
+      // fallback to ISO-8859-1 for standard Latin1
+      let altText = new TextDecoder('windows-1252').decode(buf); // Standard Latin1 variant
+      
+      // If we see "¢" (0xA2) it's almost certainly CP850 in Panama data for "ó"
+      if (text.includes('\u00A2')) {
+         // Node's TextDecoder doesn't always support 'cp850', so we handle the most common manually
+         // or use windows-1252 if it looks better.
+         console.log(`    ℹ️  Recoded from Windows-1252/ISO-8859-1 (UTF-8/CP850 issues)`);
+         text = altText;
+      } else if (hasReplacement) {
+         text = altText;
+      }
+    }
+
     return parseCsv(text);
   } catch (err) {
     console.error(`Failed to fetch CSV ${url}: ${err.message}`);
@@ -272,7 +300,8 @@ async function processDataset(dataset) {
       }
 
       const amount = amountCol ? row[amountCol] : '';
-      const date = dateCol ? row[dateCol] : '';
+      const rawDate = dateCol ? row[dateCol] : '';
+      const date = normalizeDate(rawDate);
       const province = provinceCol ? row[provinceCol] : '';
       const activity = activityCol ? row[activityCol] : '';
 

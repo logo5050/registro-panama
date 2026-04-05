@@ -37,8 +37,10 @@ export async function ingestEvent(event) {
     const data = await res.json();
 
     if (!res.ok) {
-      console.error(`  ❌ Failed to ingest "${event.name}": ${data.error}`);
-      return { success: false, error: data.error };
+      const detailStr = data.details ? ` | Detail: ${data.details}` : '';
+      const codeStr = data.code ? ` (Code: ${data.code})` : '';
+      console.error(`  ❌ Failed to ingest "${event.name}": ${data.error}${detailStr}${codeStr}`);
+      return { success: false, error: data.error, details: data.details, code: data.code };
     }
 
     console.log(`  ✅ Ingested: ${event.name} → /registro/${data.slug}`);
@@ -47,6 +49,49 @@ export async function ingestEvent(event) {
     console.error(`  ❌ Network error for "${event.name}": ${err.message}`);
     return { success: false, error: err.message };
   }
+}
+
+/**
+ * Normalize date strings to YYYY-MM-DD for Postgres.
+ * Handles DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD, and YYYY.
+ * @param {string} dateStr - The date string to normalize
+ * @returns {string|null} - Normalized date or null if unparseable
+ */
+export function normalizeDate(dateStr) {
+  if (!dateStr) return null;
+  
+  // Remove any leading/trailing whitespace
+  const clean = dateStr.toString().trim();
+  if (!clean) return null;
+
+  // Handle DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmyMatch) {
+    const [_, d, m, y] = dmyMatch;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  // Handle YYYY/MM/DD or YYYY-MM-DD
+  const ymdMatch = clean.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (ymdMatch) {
+    const [_, y, m, d] = ymdMatch;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  // Handle just YYYY
+  if (/^\d{4}$/.test(clean)) {
+    return `${clean}-01-01`;
+  }
+
+  // Fallback to ISO if possible, otherwise return null to use current date
+  try {
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().split('T')[0];
+    }
+  } catch (e) {}
+
+  return null;
 }
 
 /**

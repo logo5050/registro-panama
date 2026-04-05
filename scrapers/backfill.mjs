@@ -138,8 +138,8 @@ async function runScraper(scraper) {
     const { stdout, stderr } = await execFileAsync('node', [scriptPath, '--backfill'], {
       cwd: __dirname,
       env,
-      timeout: 20 * 60 * 1000, // 20 min max per scraper
-      maxBuffer: 10 * 1024 * 1024, // 10MB output buffer
+      timeout: 180 * 60 * 1000, // 180 min max (3h) for deep backfills
+      maxBuffer: 30 * 1024 * 1024, // 30MB output buffer (CSV parsing is verbose)
     });
 
     const duration = Date.now() - start;
@@ -257,6 +257,10 @@ async function main() {
     } else {
       console.error(`\n❌ ${scraper.name} FAILED after ${formatDuration(result.duration)}`);
       console.error(`   Error: ${result.error}`);
+      if (result.output) {
+        console.error('\n📋 Scraper Output (last 2000 chars):');
+        console.error(result.output.length > 2000 ? '...' + result.output.substring(result.output.length - 2000) : result.output);
+      }
     }
     console.log('');
 

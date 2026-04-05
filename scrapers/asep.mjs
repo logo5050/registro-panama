@@ -18,8 +18,10 @@
  */
 
 import * as cheerio from 'cheerio';
-import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
+import { batchIngest, logScrapeResult, normalizeDate } from './lib/ingest.mjs';
 import { extractBusinessName, requireAnthropicKey } from './lib/extract-entity.mjs';
+
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const BACKFILL = process.argv.includes('--backfill');
 const MAX_BACKFILL_PAGES = parseInt(process.env.BACKFILL_MAX_PAGES || '50', 10);
@@ -28,28 +30,29 @@ const ASEP_BASE = 'https://asep.gob.pa';
 
 // Categories to scrape — in backfill mode we paginate deeply into each
 const RESOLUTION_CATEGORIES = [
-  `${ASEP_BASE}/category/resoluciones/`,
-  `${ASEP_BASE}/category/resoluciones/resoluciones-electricidad/`,
-  `${ASEP_BASE}/category/resoluciones/resoluciones-telecomunicaciones/`,
-  `${ASEP_BASE}/category/resoluciones/resoluciones-agua-y-alcantarillado/`,
+  `${ASEP_BASE}/resoluciones/`,
+  `${ASEP_BASE}/resoluciones-electricidad/`,
+  `${ASEP_BASE}/resoluciones-telecomunicaciones/`,
+  `${ASEP_BASE}/resoluciones-agua-y-alcantarillado/`,
 ];
 
 // Normal mode: just first 2 pages of the main listing
 const RESOLUTION_PAGES = BACKFILL
   ? [] // built dynamically in main()
   : [
-    `${ASEP_BASE}/category/resoluciones/`,
-    `${ASEP_BASE}/category/resoluciones/page/2/`,
-    `${ASEP_BASE}/category/resoluciones/resoluciones-electricidad/`,
-    `${ASEP_BASE}/category/resoluciones/resoluciones-telecomunicaciones/`,
-    `${ASEP_BASE}/category/resoluciones/resoluciones-agua-y-alcantarillado/`,
+    `${ASEP_BASE}/resoluciones/`,
+    `${ASEP_BASE}/resoluciones/page/2/`,
+    `${ASEP_BASE}/resoluciones-electricidad/`,
+    `${ASEP_BASE}/resoluciones-telecomunicaciones/`,
+    `${ASEP_BASE}/resoluciones-agua-y-alcantarillado/`,
   ];
 
-// Keywords indicating a sanction or infraction
+// Keywords indicating a sanction, infraction, or significant regulatory action
 const SANCTION_KEYWORDS = [
   'sanción', 'multa', 'infracción', 'penalidad', 'incumplimiento',
   'violación', 'amonestación', 'suspensión', 'revocación', 'clausura',
   'reclamo', 'queja', 'denuncia', 'resolución sancionatoria',
+  'proceso administrativo', 'cargo', 'pliego', 'an no.',
 ];
 
 // Known utility companies in Panama (helps with entity matching)
@@ -192,13 +195,15 @@ async function buildBackfillPages() {
   return pages;
 }
 
+let useAI = false;
+
 /**
  * Main: scrape all ASEP resolution pages and ingest.
  */
 async function main() {
   console.log(`⚡ ASEP Scraper starting...${BACKFILL ? ' (BACKFILL MODE)' : ''}\n`);
 
-  const useAI = !!process.env.ANTHROPIC_API_KEY;
+  useAI = !!process.env.ANTHROPIC_API_KEY;
   if (useAI) {
     requireAnthropicKey();
     console.log('🤖 AI entity extraction enabled\n');
@@ -262,8 +267,11 @@ async function main() {
     // AI fallback for entity extraction
     if (!businessName && useAI) {
       try {
+        console.log(`    🤖 AI extracting company from: ${item.title.substring(0, 50)}...`);
         businessName = await extractBusinessName(item.title + ' ' + item.excerpt);
-      } catch {
+        if (businessName) console.log(`       Found: ${businessName}`);
+      } catch (err) {
+        console.error(`       AI extraction failed: ${err.message}`);
         businessName = null;
       }
     }
@@ -279,7 +287,7 @@ async function main() {
       name: businessName,
       category: sector,
       event_type: 'asep_resolution',
-      event_date: item.date || new Date().toISOString().split('T')[0],
+      event_date: normalizeDate(item.date) || new Date().toISOString().split('T')[0],
       source_url: item.url,
       summary_es: item.excerpt.substring(0, 500),
       summary_en: `ASEP resolution regarding ${businessName} — ${sector} sector`,

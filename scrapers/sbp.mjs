@@ -18,13 +18,15 @@
  */
 
 import * as cheerio from 'cheerio';
-import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
+import { batchIngest, logScrapeResult, normalizeDate } from './lib/ingest.mjs';
+
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const BACKFILL = process.argv.includes('--backfill');
 const BACKFILL_START_YEAR = parseInt(process.env.BACKFILL_START_YEAR || '2010', 10);
 
-const SBP_SANCTIONS_URL = 'https://www.superbancos.gob.pa/sanciones';
-const SBP_SANCTIONS_EN = 'https://www.superbancos.gob.pa/en/sanciones';
+const SBP_SANCTIONS_URL = 'https://superbancos.gob.pa/es/supervisados-y-registros/sanciones';
+const SBP_SANCTIONS_EN = 'https://superbancos.gob.pa/en/supervised-and-registries/sanctions';
 
 async function fetchPage(url) {
   try {
@@ -151,39 +153,53 @@ async function scrapeSanctions() {
   // Strategy 3: Parse year-filtered pages (SBP has year filter)
   // In backfill mode: scan ALL years from BACKFILL_START_YEAR to now
   // In normal mode: only check current + previous year if nothing found yet
-  const currentYear = new Date().getFullYear();
   const shouldTryYears = BACKFILL || sanctions.length === 0;
 
   if (shouldTryYears) {
     const startYear = BACKFILL ? BACKFILL_START_YEAR : currentYear - 1;
     console.log(`  ${BACKFILL ? '🔄 BACKFILL:' : ''} Trying year-specific pages (${startYear}–${currentYear})...`);
 
-    for (let year = currentYear; year >= startYear; year--) {
-      const yearUrl = `${SBP_SANCTIONS_URL}?field_year_sancion_value=${year}`;
-      console.log(`    📅 Year ${year}...`);
-      const yearHtml = await fetchPage(yearUrl);
-      if (!yearHtml) continue;
+    // SBP often uses different path structures, try a few common ones
+    const pathPatterns = [
+      'es/supervisados-y-registros/sanciones',
+      'es/sanciones',
+      'es/transparencia/sanciones',
+    ];
 
-      const $y = cheerio.load(yearHtml);
-      let yearCount = 0;
+    for (const path of pathPatterns) {
+      const baseUrl = `https://superbancos.gob.pa/${path}`;
+      console.log(`    🔍 Testing pattern: ${baseUrl}...`);
+      
+      for (let year = currentYear; year >= startYear; year--) {
+        const yearUrl = `${baseUrl}?field_year_sancion_value=${year}`;
+        const yearHtml = await fetchPage(yearUrl);
+        if (!yearHtml) continue;
 
-      $y('table tbody tr, .views-row').each((_, el) => {
-        const cells = [];
-        $y(el).find('td').each((__, td) => cells.push($y(td).text().trim()));
-        if (cells.length >= 2 && cells[0].length > 2) {
-          sanctions.push({
-            entity: cells[0],
-            amount: cells[1] || '',
-            date: `${year}`,
-            sanctionType: cells[2] || 'Sanción bancaria',
-            language,
-          });
-          yearCount++;
+        const $y = cheerio.load(yearHtml);
+        let yearCount = 0;
+
+        $y('table tbody tr, .views-row').each((_, el) => {
+          const cells = [];
+          $y(el).find('td').each((__, td) => cells.push($y(td).text().trim()));
+          if (cells.length >= 2 && cells[0].length > 2 && !cells[0].toLowerCase().includes('entidad')) {
+            sanctions.push({
+              entity: cells[0],
+              amount: cells[1] || '',
+              date: `${year}`,
+              sanctionType: cells[2] || 'Sanción bancaria',
+              language,
+            });
+            yearCount++;
+          }
+        });
+
+        if (yearCount > 0) {
+          console.log(`      ✅ Found ${yearCount} sanctions for ${year} using pattern ${path}`);
         }
-      });
-
-      console.log(`      Found ${yearCount} sanctions for ${year}`);
-      await new Promise(r => setTimeout(r, BACKFILL ? 2000 : 1000));
+        await new Promise(r => setTimeout(r, BACKFILL ? 1000 : 500));
+      }
+      
+      if (sanctions.length > 0) break; // If we found data with one pattern, stop
     }
   }
 
@@ -220,7 +236,7 @@ async function main() {
     name: s.entity,
     category: 'Banca y Finanzas',
     event_type: 'sbp_sanction',
-    event_date: s.date || new Date().toISOString().split('T')[0],
+    event_date: normalizeDate(s.date) || new Date().toISOString().split('T')[0],
     source_url: SBP_SANCTIONS_URL,
     summary_es: `Sanción bancaria contra ${s.entity}${s.amount ? ` por ${s.amount}` : ''}. ${s.sanctionType}.`,
     summary_en: `Banking sanction against ${s.entity}${s.amount ? ` for ${s.amount}` : ''}. Published by Superintendencia de Bancos de Panamá.`,

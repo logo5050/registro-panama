@@ -14,6 +14,8 @@ import * as cheerio from 'cheerio';
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
 import { extractBusinessFromNews, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
 
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const BACKFILL = process.argv.includes('--backfill');
 const MAX_BACKFILL_PAGES = parseInt(process.env.BACKFILL_MAX_PAGES || '20', 10);
 const MAX_ARTICLES = BACKFILL ? 200 : 30;

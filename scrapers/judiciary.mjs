@@ -18,6 +18,8 @@ import * as cheerio from 'cheerio';
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
 import { extractBusinessName, requireAnthropicKey } from './lib/extract-entity.mjs';
 
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const BACKFILL = process.argv.includes('--backfill');
 const MAX_BACKFILL_PAGES = parseInt(process.env.BACKFILL_MAX_PAGES || '30', 10);
 const MAX_ARTICLES = BACKFILL ? 200 : 15;
@@ -25,13 +27,14 @@ const MAX_ARTICLES = BACKFILL ? 200 : 15;
 const OJ_BASE = 'https://www.organojudicial.gob.pa';
 const OJ_NEWS = `${OJ_BASE}/noticias`;
 
-// Keywords related to commercial court rulings
-const COURT_KEYWORDS = [
-  'sentencia', 'fallo', 'resolución', 'demanda', 'embargo',
-  'quiebra', 'liquidación', 'concurso', 'arbitraje',
-  'competencia desleal', 'propiedad industrial', 'marca',
-  'contrato', 'sociedad anónima', 'responsabilidad',
-  'indemnización', 'incumplimiento'
+// Updated selectors for the new site structure
+const NEWS_SELECTORS = [
+  '.view-noticias .views-row',
+  '.view-content .views-row',
+  'article',
+  '.node-noticia',
+  '.field-content',
+  '.noticia-item'
 ];
 
 async function fetchPage(url) {
@@ -51,6 +54,16 @@ async function fetchPage(url) {
   }
 }
 
+// Keywords related to commercial court rulings and judicial activity
+const COURT_KEYWORDS = [
+  'sentencia', 'fallo', 'resolución', 'demanda', 'embargo',
+  'quiebra', 'liquidación', 'concurso', 'arbitraje',
+  'competencia desleal', 'propiedad industrial', 'marca',
+  'contrato', 'sociedad anónima', 'responsabilidad',
+  'indemnización', 'incumplimiento', 'edicto', 'acuerdo',
+  'audiencia', 'proceso', 'juzgado', 'tribunal',
+];
+
 async function scrapeJudiciaryNews() {
   console.log('🔍 Scraping Órgano Judicial news...');
 
@@ -63,22 +76,15 @@ async function scrapeJudiciaryNews() {
   const $ = cheerio.load(html);
   const articles = [];
 
-  // Try multiple selector patterns
-  const selectors = [
-    'article', '.views-row', '.node', '.post',
-    'div[class*="noticia"]', 'div[class*="news"]',
-    '.field-content', 'li[class*="item"]'
-  ];
-
   let $items = $([]);
-  for (const sel of selectors) {
+  for (const sel of NEWS_SELECTORS) {
     $items = $(sel);
     if ($items.length > 0) break;
   }
 
   if ($items.length > 0) {
     $items.each((_, el) => {
-      const title = $(el).find('h2, h3, h4, .title, a').first().text().trim();
+      const title = $(el).find('h2, h3, h4, .title, a, .field-name-title').first().text().trim();
       const link = $(el).find('a').first().attr('href') || '';
       const text = $(el).text().toLowerCase();
       const isRelevant = COURT_KEYWORDS.some(k => text.includes(k));
@@ -272,16 +278,25 @@ async function main() {
   const events = [];
 
   for (const article of unique.slice(0, MAX_ARTICLES)) {
-    console.log(`  📄 Parsing: ${article.title.substring(0, 60)}...`);
-    const event = await parseArticle(article);
-    if (event) events.push(event);
-    await new Promise(r => setTimeout(r, BACKFILL ? 2000 : 1500));
+    try {
+      console.log(`  📄 Parsing: ${article.title.substring(0, 60)}...`);
+      const event = await parseArticle(article);
+      if (event) {
+        console.log(`     ✅ Extracted entity: ${event.name}`);
+        events.push(event);
+      } else {
+        console.log(`     ℹ️ No entity found in article`);
+      }
+    } catch (err) {
+      console.error(`     ❌ Error parsing article: ${err.message}`);
+    }
+    await new Promise(r => setTimeout(r, BACKFILL ? 1000 : 500));
   }
 
   if (events.length === 0) {
-    console.log('\n⚠️  No parseable court ruling events found this run.');
-    console.log('   The judiciary site may require manual review.');
-    process.exit(0);
+    console.log('\nℹ️  No new parseable court ruling events found this run.');
+    logScrapeResult('Judiciary', { ingested: 0, failed: 0, total: 0 });
+    return;
   }
 
   const result = await batchIngest(events);

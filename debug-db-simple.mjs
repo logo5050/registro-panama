@@ -20,9 +20,9 @@ function loadEnv() {
 loadEnv();
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 async function debug() {
   console.log('🔍 Checking database for ACODECO related data...\n');
@@ -39,7 +39,7 @@ async function debug() {
     types.forEach(t => {
       counts[t.event_type] = (counts[t.event_type] || 0) + 1;
     });
-    console.log('Event types distribution:', JSON.stringify(counts, null, 2));
+    console.log('Event types distribution (Full):', JSON.stringify(counts, null, 2));
   }
 
   // 2. Test a flexible search

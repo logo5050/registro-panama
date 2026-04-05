@@ -31,14 +31,25 @@ function generateSlug(name: string): string {
 }
 
 export async function POST(req: Request) {
-  // --- Auth ---
-  const authHeader = req.headers.get('Authorization');
+  // --- Initialization Check ---
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const secret = process.env.INGEST_SECRET;
 
-  // Fail-closed: reject if secret is missing, too short, or doesn't match
+  if (!supabaseUrl || !supabaseServiceKey) {
+    console.error('CRITICAL: Supabase environment variables are missing');
+    return NextResponse.json({ 
+      error: 'Server misconfigured: Missing Supabase credentials',
+      details: 'Check NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY'
+    }, { status: 500 });
+  }
+
+  // --- Auth ---
+  const authHeader = req.headers.get('Authorization');
+  
   if (!secret || secret.length < 16) {
     console.error('INGEST_SECRET is not configured or too short (min 16 chars)');
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+    return NextResponse.json({ error: 'Server misconfigured: INGEST_SECRET' }, { status: 500 });
   }
 
   if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader !== `Bearer ${secret}`) {
@@ -151,9 +162,22 @@ export async function POST(req: Request) {
       message: 'Business event ingested successfully',
       slug,
     });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal Server Error';
-    console.error('Ingestion API Error:', err);
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch (err: any) {
+    const message = err?.message || (typeof err === 'string' ? err : 'Internal Server Error');
+    const details = err?.details || null;
+    
+    console.error('Ingestion API Error:', {
+      message,
+      details,
+      code: err?.code,
+      hint: err?.hint,
+      stack: err instanceof Error ? err.stack : undefined
+    });
+    
+    return NextResponse.json({ 
+      error: message,
+      details,
+      code: err?.code
+    }, { status: 500 });
   }
 }

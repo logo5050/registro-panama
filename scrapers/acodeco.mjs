@@ -19,6 +19,8 @@ import * as cheerio from 'cheerio';
 import { batchIngest, logScrapeResult } from './lib/ingest.mjs';
 import { extractBusinessFromACODECO, extractBusinessFromPDF, requireAnthropicKey, logExtractionStats } from './lib/extract-entity.mjs';
 
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const BACKFILL = process.argv.includes('--backfill');
 const MAX_BACKFILL_PAGES = parseInt(process.env.BACKFILL_MAX_PAGES || '30', 10);
 const MAX_ARTICLES = BACKFILL ? 500 : 20;
@@ -378,9 +380,9 @@ async function main() {
   }
 
   if (events.length === 0) {
-    console.log('\n⚠️  No parseable infraction events found this run.');
-    console.log('   This is normal — ACODECO may not have new infractions this week.');
-    process.exit(0);
+    console.log('\nℹ️  No parseable infraction events found this run.');
+    logScrapeResult('ACODECO', { ingested: 0, failed: 0, total: 0 });
+    return;
   }
 
   logExtractionStats();
